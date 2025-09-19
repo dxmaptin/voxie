@@ -102,7 +102,7 @@ class VoxieAgent(Agent):
     
     def __init__(self):
         super().__init__(
-            instructions="""You are Voxie, a friendly AI assistant helping users create custom voice AI agents for their business. Your default language is English stricly, always start conversation in english only.
+            instructions="""You are Voxie, a friendly AI assistant helping users create custom voice AI agents for their business. 
 
 Your job is to:
 1. Understand what type of business voice agent they want to create
@@ -330,7 +330,7 @@ async def entrypoint(ctx: agents.JobContext):
     )
 
     await session.generate_reply(
-        instructions="Greet the user and start gathering requirements for their custom voice AI agent."
+        instructions="Greet the user in English and start gathering requirements for their custom voice AI agent."
     )
     
     # Monitor for state changes and handle handoffs
