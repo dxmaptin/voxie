@@ -10,6 +10,7 @@ from livekit import agents
 from livekit.agents import AgentSession, Agent, RoomInputOptions
 from livekit.agents.llm import function_tool
 from livekit.plugins import openai, noise_cancellation
+from knowledge_base_tools import KnowledgeBaseTools
 
 load_dotenv(".env.local")
 logger = logging.getLogger("multi-agent")
@@ -56,52 +57,108 @@ class AgentManager:
         
     async def transition_to_processing(self):
         """Start background processing of requirements"""
+        logger.info("🔄 Starting transition to processing state")
         self.state = AgentState.PROCESSING
-        logger.info("Transitioning to processing state")
-        
-        # Process requirements in background
-        processing_agent = ProcessingAgent()
-        self.processed_spec = await processing_agent.process_requirements(self.user_requirements)
-        
-        self.state = AgentState.DEMO_READY
-        logger.info("Demo agent ready for handoff")
-        
-        # Notify Voxie that demo is ready
-        if self.current_session and self.state == AgentState.DEMO_READY:
+        logger.info("✅ State changed to PROCESSING")
+
+        # Start small talk while processing
+        if self.current_session:
+            logger.info("💬 Starting small talk during processing")
             await self.current_session.generate_reply(
-                instructions=f"Perfect! Your {self.processed_spec.agent_type} is ready to test. Would you like to try it out now? Just say yes and I'll connect you to your demo agent!"
+                instructions="Keep the user engaged with friendly small talk while I process their requirements. Say something like: 'Great! I'm working on creating your custom agent right now. This should only take a few moments. While I'm processing everything, is there anything specific you'd like your agent to be particularly good at?'"
+            )
+
+        # Process requirements in background with periodic updates
+        logger.info("🏗️ Starting requirements processing...")
+        processing_agent = ProcessingAgent()
+
+        try:
+            # Start processing with periodic engagement
+            processing_task = asyncio.create_task(processing_agent.process_requirements(self.user_requirements))
+
+            # Engage user during processing
+            engagement_count = 0
+            while not processing_task.done():
+                await asyncio.sleep(3)  # Wait 3 seconds
+                if not processing_task.done() and self.current_session and engagement_count < 2:
+                    engagement_count += 1
+                    logger.info(f"💬 Engaging user during processing (attempt {engagement_count})")
+
+                    if engagement_count == 1:
+                        await self.current_session.generate_reply(
+                            instructions="Keep the conversation going! Say something like: 'I'm configuring your agent's personality and functions right now. It's going to have access to our comprehensive knowledge base too, which is really exciting!'"
+                        )
+                    elif engagement_count == 2:
+                        await self.current_session.generate_reply(
+                            instructions="Almost done! Say something like: 'Just putting the finishing touches on your agent now. I think you're going to love how it turns out!'"
+                        )
+
+            # Get the result
+            self.processed_spec = await processing_task
+            logger.info(f"✅ Processing complete! Created spec: {self.processed_spec.agent_type}")
+
+        except Exception as e:
+            logger.error(f"❌ Processing failed: {e}")
+            if self.current_session:
+                await self.current_session.generate_reply(
+                    instructions="I'm sorry, there was an issue creating your agent. Let me try again or help you with something else."
+                )
+            return
+
+        self.state = AgentState.DEMO_READY
+        logger.info("✅ State changed to DEMO_READY")
+        logger.info("📢 Demo agent ready for handoff")
+
+        # Notify Voxie that demo is ready with more engaging message
+        if self.current_session and self.state == AgentState.DEMO_READY:
+            logger.info("💬 Notifying user that demo is ready")
+            await self.current_session.generate_reply(
+                instructions=f"Fantastic! Your {self.processed_spec.agent_type} is now ready to test! I've configured it with all the features you requested, including access to our comprehensive knowledge base. Would you like to try it out right now? Just say 'yes' or 'let's test it' and I'll connect you to your new agent!"
             )
         
     async def handoff_to_demo(self, room):
         """Handoff from Voxie to Demo agent"""
+        logger.info(f"🔄 Handoff requested. Current state: {self.state}")
+        logger.info(f"🔍 Processed spec exists: {self.processed_spec is not None}")
+
         if self.state == AgentState.DEMO_READY and self.processed_spec:
-            logger.info("Handing off to demo agent")
-            
+            logger.info("✅ Handoff conditions met - starting handoff process")
+
             # PROPERLY STOP VOXIE SESSION FIRST
             if self.current_session:
-                # Voxie announces handoff
+                logger.info("💬 Voxie announcing handoff")
                 await self.current_session.generate_reply(
                     instructions=f"Perfect! I've created your {self.processed_spec.agent_type} and it's ready for testing. I'm now connecting you to your new agent. When you're done testing, just ask to speak with Voxie again and I'll be here to help with any adjustments. Here we go!"
                 )
-                
+
                 # Wait longer for message delivery
+                logger.info("⏳ Waiting for message delivery...")
                 await asyncio.sleep(5)
-                
+
                 # PROPERLY CLOSE VOXIE SESSION
+                logger.info("🔒 Closing Voxie session...")
                 await self.current_session.aclose()
-                logger.info("Voxie session closed")
-                
+                logger.info("✅ Voxie session closed")
+
                 # Clear current session
                 self.current_session = None
-            
+
             # Create demo agent with DIFFERENT VOICE (not coral)
-            demo_agent = DemoAgentCreator.create_agent(self.processed_spec)
-            
+            logger.info(f"🏗️ Creating demo agent: {self.processed_spec.agent_type}")
+            try:
+                demo_agent = DemoAgentCreator.create_agent(self.processed_spec)
+                logger.info("✅ Demo agent created successfully")
+            except Exception as e:
+                logger.error(f"❌ Demo agent creation failed: {e}")
+                return
+
             # Create new session with demo agent (different voice from Voxie's coral)
+            logger.info(f"🎵 Creating new session with voice: {self.processed_spec.voice}")
             demo_session = AgentSession(
                 llm=openai.realtime.RealtimeModel(voice=self.processed_spec.voice)
             )
-            
+
+            logger.info("🚀 Starting demo session...")
             await demo_session.start(
                 room=room,
                 agent=demo_agent,
@@ -109,18 +166,23 @@ class AgentManager:
                     noise_cancellation=noise_cancellation.BVC(),
                 ),
             )
-            
+
             # Wait a moment before demo agent speaks
-            await asyncio.sleep(5)
-            
+            logger.info("⏳ Waiting before demo agent introduction...")
+            await asyncio.sleep(3)
+
             # Demo agent introduces itself
             business_name = self.processed_spec.business_context.get("business_name", "our business")
+            logger.info(f"💬 Demo agent introducing itself for: {business_name}")
             await demo_session.generate_reply(
-                instructions=f"Hello! I'm your new {self.processed_spec.agent_type} for {business_name}. I'm here to help you with your needs. You can try out my features - I can help with various services. When you're ready to go back to Voxie for feedback, just let me know. How can I assist you today?"
+                instructions=f"Hello! I'm your new {self.processed_spec.agent_type} for {business_name}. I'm here to help you with your needs. You can try out my features - I can help with various services and I also have access to our comprehensive knowledge base. When you're ready to go back to Voxie for feedback, just let me know. How can I assist you today?"
             )
-            
+
             self.state = AgentState.DEMO_ACTIVE
             self.current_session = demo_session
+            logger.info("✅ Handoff complete - demo agent is now active")
+        else:
+            logger.warning(f"❌ Handoff failed - State: {self.state}, Spec exists: {self.processed_spec is not None}")
             
     async def handoff_back_to_voxie(self, room):
         """Handoff from Demo back to Voxie"""
@@ -183,6 +245,8 @@ class VoxieAgent(Agent):
         super().__init__(
             instructions="""You are Voxie, a friendly AI assistant helping users create custom voice AI agents for their business. 
 
+Your favourite colour is green.
+
 Your job is to:
 1. Understand what type of business voice agent they want to create
 2. Gather all necessary information about their requirements
@@ -201,54 +265,83 @@ Be conversational, helpful, and thorough. Once you have enough information, use 
     @function_tool
     async def store_user_requirement(self, requirement_type: str, value: str):
         """Store a user requirement during the conversation"""
-        logger.info(f"Storing requirement: {requirement_type} = {value}")
-        
+        logger.info(f"📝 Storing requirement: {requirement_type} = {value}")
+
         # Handle various requirement types that Voxie might use
         req_type_lower = requirement_type.lower()
-        
+
         if "business_name" in req_type_lower or "name" in req_type_lower:
             agent_manager.user_requirements.business_name = value
+            logger.info(f"✅ Set business name: {value}")
         elif "business_type" in req_type_lower or "industry" in req_type_lower or "business_industry" in req_type_lower:
             agent_manager.user_requirements.business_type = value
+            logger.info(f"✅ Set business type: {value}")
         elif "cuisine" in req_type_lower:
             agent_manager.user_requirements.business_type = f"{value} Restaurant"
+            logger.info(f"✅ Set cuisine type: {value} Restaurant")
         elif "function" in req_type_lower or "agent_function" in req_type_lower:
             agent_manager.user_requirements.main_functions.extend(value.split(", "))
+            logger.info(f"✅ Added functions: {value}")
         elif "tone" in req_type_lower or "personality" in req_type_lower or "agent_tone" in req_type_lower:
             agent_manager.user_requirements.tone = value
+            logger.info(f"✅ Set tone: {value}")
         elif "audience" in req_type_lower or "target" in req_type_lower:
             agent_manager.user_requirements.target_audience = value
+            logger.info(f"✅ Set audience: {value}")
         elif "hours" in req_type_lower or "operating" in req_type_lower:
             agent_manager.user_requirements.special_requirements.append(f"Operating hours: {value}")
+            logger.info(f"✅ Added hours: {value}")
         elif "special" in req_type_lower or "requirement" in req_type_lower:
             agent_manager.user_requirements.special_requirements.append(value)
+            logger.info(f"✅ Added special requirement: {value}")
         elif "contact" in req_type_lower:
             contact_type = req_type_lower.replace("contact_", "")
             agent_manager.user_requirements.contact_info[contact_type] = value
+            logger.info(f"✅ Added contact info: {contact_type} = {value}")
         else:
             # Generic storage for any other requirement types
             agent_manager.user_requirements.special_requirements.append(f"{requirement_type}: {value}")
-            
+            logger.info(f"✅ Added generic requirement: {requirement_type} = {value}")
+
+        # Log current state of all requirements
+        logger.info(f"📊 Current requirements summary:")
+        logger.info(f"   🏢 Business: {agent_manager.user_requirements.business_name}")
+        logger.info(f"   🏷️ Type: {agent_manager.user_requirements.business_type}")
+        logger.info(f"   🎯 Functions: {agent_manager.user_requirements.main_functions}")
+
         return f"Stored {requirement_type}: {value}"
 
     @function_tool
     async def finalize_requirements(self):
         """Finalize requirements and start processing"""
-        logger.info("Finalizing requirements and starting processing")
-        
+        logger.info("🎯 FINALIZE_REQUIREMENTS called")
+
+        # Check if we have minimum requirements
+        if not agent_manager.user_requirements.business_name and not agent_manager.user_requirements.business_type:
+            logger.warning("⚠️ No business requirements stored yet")
+            return "I need a bit more information first. What type of business would you like to create an agent for?"
+
+        logger.info(f"📊 Current requirements: Business={agent_manager.user_requirements.business_name}, Type={agent_manager.user_requirements.business_type}")
+        logger.info(f"🎯 Functions: {agent_manager.user_requirements.main_functions}")
+
         # Start background processing
+        logger.info("🚀 Creating processing task...")
         asyncio.create_task(agent_manager.transition_to_processing())
-        
+
         return "Perfect! I have all the information I need. Give me a few seconds to process everything and create your custom voice AI agent..."
-    
+
     @function_tool
     async def start_demo(self):
         """Start the demo agent"""
+        logger.info(f"🎬 START_DEMO called - Current state: {agent_manager.state}")
+        logger.info(f"🔍 Processed spec exists: {agent_manager.processed_spec is not None}")
+
         if agent_manager.state == AgentState.DEMO_READY:
-            logger.info("Voxie triggering demo handoff")
+            logger.info("✅ Triggering demo handoff...")
             asyncio.create_task(agent_manager.handoff_to_demo(agent_manager.room))
             return "Great! Let me connect you to your demo agent now..."
         else:
+            logger.warning(f"❌ Demo not ready - State: {agent_manager.state}")
             return "I'm still working on creating your agent. Just a moment more..."
     
     @function_tool
@@ -277,10 +370,38 @@ Be conversational, helpful, and thorough. Once you have enough information, use 
     @function_tool
     async def ask_demo_preference(self):
         """Ask user if they want to try the demo or are satisfied"""
+        logger.info(f"🤔 ASK_DEMO_PREFERENCE called - Demo completed: {agent_manager.demo_completed}")
         if agent_manager.demo_completed:
             return "Would you like to try the demo again with any updates, or are you satisfied with your agent? If you're all set, just let me know and I can close our session for you."
         else:
             return "Your agent is ready! Would you like to try the demo now, or do you have any questions first?"
+
+    @function_tool
+    async def check_processing_status(self):
+        """Check the current processing status"""
+        logger.info(f"📋 CHECK_PROCESSING_STATUS called - Current state: {agent_manager.state}")
+
+        if agent_manager.state == AgentState.PROCESSING:
+            return "I'm still working on creating your agent. It should be ready in just a few more moments. I'm configuring all the features you requested!"
+        elif agent_manager.state == AgentState.DEMO_READY:
+            return "Great news! Your agent is ready to test. Would you like to try it out now?"
+        elif agent_manager.state == AgentState.DEMO_ACTIVE:
+            return "You're currently testing your demo agent. When you're done, just ask to speak with me again!"
+        else:
+            return "I'm here to help you create your custom agent. What type of business agent would you like to create?"
+
+    @function_tool
+    async def engage_user_during_wait(self):
+        """Keep user engaged while processing"""
+        logger.info("💬 ENGAGE_USER_DURING_WAIT called")
+        responses = [
+            "I'm making great progress on your agent! While I work, is there anything specific you'd like your agent to excel at?",
+            "Your agent is taking shape nicely! Do you have any special requirements I should know about?",
+            "Almost there! Your agent will have access to our knowledge base. Are there any particular topics your customers ask about frequently?",
+            "I'm fine-tuning the details now. What tone would you like your agent to have - professional, friendly, or something else?"
+        ]
+        import random
+        return random.choice(responses)
 
 
 class ProcessingAgent:
@@ -351,15 +472,20 @@ class ProcessingAgent:
     
     async def process_requirements(self, requirements: UserRequirements) -> ProcessedAgentSpec:
         """Convert user requirements into structured agent specification"""
-        logger.info("Processing user requirements...")
-        
-        # Simulate processing time
-        await asyncio.sleep(5)
-        
+        logger.info("🏭 Processing user requirements...")
+        logger.info(f"📋 Business type: {requirements.business_type}")
+        logger.info(f"🏢 Business name: {requirements.business_name}")
+        logger.info(f"🎯 Functions: {requirements.main_functions}")
+
+        # Simulate processing time with progress updates
+        logger.info("⏳ Processing step 1/3: Analyzing business type...")
+        await asyncio.sleep(2)
+
         # Determine business type from requirements
         business_type = "general"  # Default
         if requirements.business_type:
             btype_lower = requirements.business_type.lower()
+            logger.info(f"🔍 Analyzing business type: '{btype_lower}'")
             if "restaurant" in btype_lower or "indian" in btype_lower or "food" in btype_lower:
                 business_type = "restaurant"
             elif "dental" in btype_lower or "dentist" in btype_lower:
@@ -370,9 +496,15 @@ class ProcessingAgent:
                 business_type = "retail"
             elif "medical" in btype_lower or "clinic" in btype_lower or "doctor" in btype_lower or "healthcare" in btype_lower or "hospital" in btype_lower:
                 business_type = "medical"
-        
+
+        logger.info(f"✅ Determined business type: {business_type}")
+
+        logger.info("⏳ Processing step 2/3: Building agent specification...")
+        await asyncio.sleep(2)
+
         template = self.BUSINESS_TEMPLATES.get(business_type, self.BUSINESS_TEMPLATES["general"])
-        
+        logger.info(f"📋 Using template: {business_type} with voice: {template['voice']}")
+
         # Build agent specification
         spec = ProcessedAgentSpec(
             agent_type=f"{requirements.business_name or 'Custom'} {business_type.title()} Assistant",
@@ -390,32 +522,50 @@ class ProcessingAgent:
                 "functions": requirements.main_functions
             }
         )
-        
-        logger.info(f"Generated spec for {spec.agent_type}")
+
+        logger.info("⏳ Processing step 3/3: Finalizing configuration...")
+        await asyncio.sleep(1)
+
+        logger.info(f"🎉 Generated spec for {spec.agent_type}")
+        logger.info(f"🎵 Voice: {spec.voice}")
+        logger.info(f"🛠️ Functions: {len(spec.functions)} configured")
         return spec
     
     def _build_instructions(self, req: UserRequirements, template: Dict) -> str:
         """Build comprehensive agent instructions"""
         business_name = req.business_name or "the business"
         tone = req.tone or template["tone"]
-        
+
         instructions = f"""You are a {tone} AI assistant for {business_name}.
-        
+
 Your primary responsibilities:
 - Assist customers with their needs
 - Provide helpful information about our services
-- Maintain a {tone} demeanor at all times"""
+- Maintain a {tone} demeanor at all times
+
+IMPORTANT: You have access to a comprehensive knowledge base through these functions:
+- search_knowledge_base(): Search for any information in our company knowledge base
+- answer_detailed_question(): Get detailed answers to complex questions
+- get_product_specifications(): Get technical specs for products
+
+Use these knowledge base tools whenever customers ask about:
+- Product details, specifications, or features
+- Company policies or procedures
+- Technical information
+- Any topic you're not immediately familiar with
+
+Always try to search the knowledge base first before giving generic answers."""
 
         if req.main_functions:
             instructions += f"\n\nKey functions you can help with:\n"
             for func in req.main_functions:
                 instructions += f"- {func}\n"
-                
+
         if req.special_requirements:
             instructions += f"\n\nSpecial requirements:\n"
             for req_item in req.special_requirements:
                 instructions += f"- {req_item}\n"
-                
+
         return instructions
     
     def _build_functions(self, req: UserRequirements, template: Dict) -> List[Dict[str, Any]]:
@@ -472,14 +622,14 @@ class DemoAgentCreator:
         class RestaurantDemoAgent(Agent):
             def __init__(self):
                 super().__init__(instructions=spec.instructions)
-                
+
             @function_tool
             async def take_reservation(self, date: str, time: str, party_size: str, name: str, phone: str = ""):
                 """Take a restaurant reservation"""
                 business_name = spec.business_context.get("business_name", "our restaurant")
                 logger.info(f"Demo agent taking reservation: {name} for {party_size} people on {date} at {time}")
                 return f"Perfect! I've made a reservation at {business_name} for {name} for {party_size} people on {date} at {time}. We'll see you then!"
-            
+
             @function_tool
             async def menu_inquiry(self, item: str = ""):
                 """Handle menu inquiries"""
@@ -488,13 +638,29 @@ class DemoAgentCreator:
                     return f"Great choice! Our {item} is one of our most popular dishes. It's made with fresh ingredients and comes with a side of your choice."
                 else:
                     return f"We have a wonderful menu. What would you like to know more about?"
-            
+
             @function_tool
             async def take_order(self, items: str, customer_name: str, phone: str = "", address: str = ""):
                 """Take a food order"""
                 business_name = spec.business_context.get("business_name", "our restaurant")
                 logger.info(f"Demo agent taking order: {items} for {customer_name}")
                 return f"Excellent! I've got your order for {items}. That'll be ready in about 25-30 minutes at {business_name}. Thank you!"
+
+            # KNOWLEDGE BASE TOOLS - Available to all restaurant agents
+            @function_tool
+            async def search_knowledge_base(self, query: str, max_results: int = 3):
+                """Search the company knowledge base for information"""
+                return await KnowledgeBaseTools.search_knowledge_base(query, max_results)
+
+            @function_tool
+            async def answer_detailed_question(self, question: str):
+                """Get a detailed answer to a specific question from the knowledge base"""
+                return await KnowledgeBaseTools.answer_detailed_question(question)
+
+            @function_tool
+            async def get_product_specifications(self, product_name: str):
+                """Get technical specifications for a specific product"""
+                return await KnowledgeBaseTools.get_product_specifications(product_name)
                 
             @function_tool
             async def end_demo(self):
@@ -535,6 +701,22 @@ class DemoAgentCreator:
             async def emergency_info(self):
                 """Provide emergency contact information"""
                 return "For emergencies outside business hours, please call our emergency line. If this is a medical emergency, please call 911 immediately."
+
+            # KNOWLEDGE BASE TOOLS - Available to all medical agents
+            @function_tool
+            async def search_knowledge_base(self, query: str, max_results: int = 3):
+                """Search the company knowledge base for information"""
+                return await KnowledgeBaseTools.search_knowledge_base(query, max_results)
+
+            @function_tool
+            async def answer_detailed_question(self, question: str):
+                """Get a detailed answer to a specific question from the knowledge base"""
+                return await KnowledgeBaseTools.answer_detailed_question(question)
+
+            @function_tool
+            async def get_product_specifications(self, product_name: str):
+                """Get technical specifications for a specific product"""
+                return await KnowledgeBaseTools.get_product_specifications(product_name)
                 
             @function_tool
             async def end_demo(self):
@@ -602,6 +784,22 @@ class DemoAgentCreator:
             async def business_hours(self):
                 """Provide business hours"""
                 return "We're typically open Monday through Friday 9 AM to 5 PM. Would you like me to check our specific hours for today?"
+
+            # KNOWLEDGE BASE TOOLS - Available to all general agents (including car dealerships)
+            @function_tool
+            async def search_knowledge_base(self, query: str, max_results: int = 3):
+                """Search the company knowledge base for information"""
+                return await KnowledgeBaseTools.search_knowledge_base(query, max_results)
+
+            @function_tool
+            async def answer_detailed_question(self, question: str):
+                """Get a detailed answer to a specific question from the knowledge base"""
+                return await KnowledgeBaseTools.answer_detailed_question(question)
+
+            @function_tool
+            async def get_product_specifications(self, product_name: str):
+                """Get technical specifications for a specific product"""
+                return await KnowledgeBaseTools.get_product_specifications(product_name)
                 
             @function_tool
             async def end_demo(self):
