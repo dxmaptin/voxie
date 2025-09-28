@@ -6,11 +6,6 @@ This module provides function tools that agents can use to access the Ragie know
 import sys
 import os
 
-# Add the function_call directory to the path so we can import ragie modules
-current_dir = os.path.dirname(os.path.abspath(__file__))
-function_call_dir = os.path.join(os.path.dirname(os.path.dirname(current_dir)), 'function_call')
-sys.path.append(function_call_dir)
-
 from livekit.agents.llm import function_tool
 from ragie_db_tool import search_ragie_knowledge, ragie_kb
 from ragie_voice_agent import answer_question
