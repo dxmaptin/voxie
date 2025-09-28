@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Any
 import json
 import asyncio
 import logging
+import os
 
 from livekit import agents
 from livekit.agents import AgentSession, Agent, RoomInputOptions
@@ -14,6 +15,24 @@ from knowledge_base_tools import KnowledgeBaseTools
 
 load_dotenv(".env.local")
 logger = logging.getLogger("multi-agent")
+
+# Production bridge integration
+try:
+    from production_bridge import initialize_production_bridge
+    production_bridge = initialize_production_bridge()
+    print("✅ Production bridge initialized")
+except ImportError:
+    production_bridge = None
+    print("⚠️ Production bridge not available (development mode)")
+
+# Console broadcaster for development
+try:
+    from console_broadcaster import console_broadcaster
+    console_event_broadcaster = console_broadcaster
+    print("✅ Console broadcaster initialized")
+except ImportError:
+    console_event_broadcaster = None
+    print("⚠️ Console broadcaster not available")
 
 
 class AgentState(Enum):
@@ -46,7 +65,7 @@ class ProcessedAgentSpec:
 
 
 class AgentManager:
-    def __init__(self):
+    def __init__(self, event_broadcaster=None):
         self.state = AgentState.VOXIE_ACTIVE
         self.user_requirements = UserRequirements()
         self.processed_spec: Optional[ProcessedAgentSpec] = None
@@ -54,12 +73,80 @@ class AgentManager:
         self.room = None
         self.demo_completed = False  # Track if demo has been completed
         self.context = None  # Store the job context
-        
-    async def transition_to_processing(self):
+        self.event_broadcaster = event_broadcaster
+        self.current_session_id = None  # Track current WebSocket session
+
+        # Use production bridge in production, console broadcaster in development
+        self.production_bridge = production_bridge
+        self.console_broadcaster = console_event_broadcaster
+
+    def _emit_event(self, session_id: str, step_name: str, status: str, message: str, error: Optional[str] = None, **extra_data):
+        """Emit events to both production bridge and console broadcaster"""
+        # Send to production bridge if available
+        if self.production_bridge:
+            self.production_bridge.emit_step(session_id, step_name, status, message, error, **extra_data)
+
+        # Send to console broadcaster if available
+        if self.console_broadcaster:
+            self.console_broadcaster.emit_step(session_id, step_name, status, message, error, **extra_data)
+
+        # Send to WebSocket broadcaster if available (local development)
+        if self.event_broadcaster:
+            self.event_broadcaster.emit_step(session_id, step_name, status, message, error, **extra_data)
+
+    def _emit_action(self, session_id: str, action_type: str, status: str, message: str, tool_data: Optional[Dict] = None, error: Optional[str] = None):
+        """Emit action-based events to both production bridge and console broadcaster"""
+        # Send to production bridge if available
+        if self.production_bridge:
+            self.production_bridge.emit_action(session_id, action_type, status, message, tool_data, error)
+
+        # Send to console broadcaster if available (for development)
+        if self.console_broadcaster:
+            # Console broadcaster doesn't have emit_action, use emit_step
+            self.console_broadcaster.emit_step(session_id, action_type, status, message, error, tool_data=tool_data)
+
+        # Send to WebSocket broadcaster if available (local development)
+        if self.event_broadcaster and hasattr(self.event_broadcaster, 'emit_action'):
+            self.event_broadcaster.emit_action(session_id, action_type, status, message, tool_data, error)
+
+    def _emit_overall_status(self, session_id: str, status: str, message: str, error: Optional[str] = None, **extra_data):
+        """Emit overall status to both production bridge and console broadcaster"""
+        # Send to production bridge if available
+        if self.production_bridge:
+            self.production_bridge.emit_overall_status(session_id, status, message, error, **extra_data)
+
+        # Send to console broadcaster if available
+        if self.console_broadcaster:
+            self.console_broadcaster.emit_step(session_id, 'overall', status, message, error, **extra_data)
+
+        # Send to WebSocket broadcaster if available (local development)
+        if self.event_broadcaster and hasattr(self.event_broadcaster, 'emit_overall_status'):
+            self.event_broadcaster.emit_overall_status(session_id, status, message, error, **extra_data)
+
+    def set_event_broadcaster(self, event_broadcaster):
+        """Set event broadcaster for real-time updates"""
+        self.event_broadcaster = event_broadcaster
+
+    def set_session_id(self, session_id: str):
+        """Set current session ID for real-time updates"""
+        self.current_session_id = session_id
+
+    async def transition_to_processing(self, session_id: str = None):
         """Start background processing of requirements"""
+        if session_id:
+            self.current_session_id = session_id
+
         logger.info("🔄 Starting transition to processing state")
         self.state = AgentState.PROCESSING
         logger.info("✅ State changed to PROCESSING")
+
+        # Emit processing start event
+        if self.event_broadcaster and self.current_session_id:
+            self._emit_overall_status(
+                self.current_session_id,
+                'started',
+                'Starting agent creation process...'
+            )
 
         # Start small talk while processing
         if self.current_session:
@@ -70,11 +157,13 @@ class AgentManager:
 
         # Process requirements in background with periodic updates
         logger.info("🏗️ Starting requirements processing...")
-        processing_agent = ProcessingAgent()
+        processing_agent = ProcessingAgent(event_broadcaster=self.event_broadcaster)
 
         try:
-            # Start processing with periodic engagement
-            processing_task = asyncio.create_task(processing_agent.process_requirements(self.user_requirements))
+            # Start processing with real-time updates
+            processing_task = asyncio.create_task(
+                processing_agent.process_requirements(self.user_requirements, self.current_session_id)
+            )
 
             # Engage user during processing
             engagement_count = 0
@@ -99,6 +188,16 @@ class AgentManager:
 
         except Exception as e:
             logger.error(f"❌ Processing failed: {e}")
+
+            # Emit error to frontend
+            if self.event_broadcaster and self.current_session_id:
+                self._emit_overall_status(
+                    self.current_session_id,
+                    'failed',
+                    'Agent creation failed',
+                    error=str(e)
+                )
+
             if self.current_session:
                 await self.current_session.generate_reply(
                     instructions="I'm sorry, there was an issue creating your agent. Let me try again or help you with something else."
@@ -234,8 +333,14 @@ class AgentManager:
             self.current_session = voxie_session
 
 
-# Global agent manager
-agent_manager = AgentManager()
+# Global agent manager with console event broadcasting
+try:
+    from console_broadcaster import console_broadcaster
+    agent_manager = AgentManager(event_broadcaster=console_broadcaster)
+    print("✅ Voxie initialized with console event broadcasting")
+except ImportError:
+    agent_manager = AgentManager()
+    print("⚠️ Console broadcaster not available, using basic agent manager")
 
 
 class VoxieAgent(Agent):
@@ -459,9 +564,14 @@ OUTCOMES TO TRACK
         logger.info(f"📊 Current requirements: Business={agent_manager.user_requirements.business_name}, Type={agent_manager.user_requirements.business_type}")
         logger.info(f"🎯 Functions: {agent_manager.user_requirements.main_functions}")
 
-        # Start background processing
+        # Start background processing with session ID for console logging
+        import time
+        session_id = f"voxie_session_{int(time.time())}"
         logger.info("🚀 Creating processing task...")
-        asyncio.create_task(agent_manager.transition_to_processing())
+        print(f"🎯 Starting agent creation for: {agent_manager.user_requirements.business_name}")
+        print("📡 Real-time events will appear below:")
+        print("=" * 50)
+        asyncio.create_task(agent_manager.transition_to_processing(session_id))
 
         return "Perfect! I have all the information I need. Give me a few seconds to process everything and create your custom voice AI agent..."
 
@@ -541,6 +651,10 @@ OUTCOMES TO TRACK
 
 class ProcessingAgent:
     """Background agent that processes requirements into structured data"""
+
+    def __init__(self, event_broadcaster=None):
+        """Initialize with optional event broadcaster for real-time updates"""
+        self.event_broadcaster = event_broadcaster
     
     BUSINESS_TEMPLATES = {
         "restaurant": {
@@ -605,12 +719,16 @@ class ProcessingAgent:
         }
     }
     
-    async def process_requirements(self, requirements: UserRequirements) -> ProcessedAgentSpec:
+    async def process_requirements(self, requirements: UserRequirements, session_id: str = None) -> ProcessedAgentSpec:
         """Convert user requirements into structured agent specification"""
         logger.info("🏭 Processing user requirements...")
         logger.info(f"📋 Business type: {requirements.business_type}")
         logger.info(f"🏢 Business name: {requirements.business_name}")
         logger.info(f"🎯 Functions: {requirements.main_functions}")
+
+        # Emit scenario analysis start
+        if self.event_broadcaster and session_id:
+            self._emit_event(session_id, 'scenario', 'started', 'Analyzing your business requirements...')
 
         # Simulate processing time with progress updates
         logger.info("⏳ Processing step 1/3: Analyzing business type...")
@@ -634,11 +752,28 @@ class ProcessingAgent:
 
         logger.info(f"✅ Determined business type: {business_type}")
 
+        # Emit scenario analysis completion and start prompt generation
+        if self.event_broadcaster and session_id:
+            self._emit_event(session_id, 'scenario', 'completed', f'Business type determined: {business_type.title()}')
+            self._emit_event(session_id, 'prompts', 'started', f'Creating custom prompts for {business_type} agent...')
+
         logger.info("⏳ Processing step 2/3: Building agent specification...")
         await asyncio.sleep(2)
 
         template = self.BUSINESS_TEMPLATES.get(business_type, self.BUSINESS_TEMPLATES["general"])
         logger.info(f"📋 Using template: {business_type} with voice: {template['voice']}")
+
+        # Emit prompt completion and voice setup start
+        agent_name = f"{requirements.business_name or 'Custom'} {business_type.title()} Assistant"
+        if self.event_broadcaster and session_id:
+            self._emit_event(session_id, 'prompts', 'completed', f'Prompts created for {business_type} agent')
+            self._emit_event(
+                session_id,
+                'voice',
+                'started',
+                f'Setting up voice profile for "{agent_name}"...',
+                agent_name=agent_name
+            )
 
         # Build agent specification
         spec = ProcessedAgentSpec(
@@ -659,11 +794,38 @@ class ProcessingAgent:
         )
 
         logger.info("⏳ Processing step 3/3: Finalizing configuration...")
+
+        # Emit knowledge base setup start
+        if self.event_broadcaster and session_id:
+            self._emit_event(session_id, 'knowledge_base', 'started', 'Setting up knowledge base access...')
+
         await asyncio.sleep(1)
+
+        # Emit voice completion and knowledge base completion
+        if self.event_broadcaster and session_id:
+            self._emit_event(
+                session_id,
+                'voice',
+                'completed',
+                f'Voice profile ready - {template["voice"]}',
+                agent_name=agent_name,
+                voice_model=template["voice"]
+            )
+            self._emit_event(session_id, 'knowledge_base', 'completed', 'Knowledge base connected')
 
         logger.info(f"🎉 Generated spec for {spec.agent_type}")
         logger.info(f"🎵 Voice: {spec.voice}")
         logger.info(f"🛠️ Functions: {len(spec.functions)} configured")
+
+        # Emit final completion
+        if self.event_broadcaster and session_id:
+            self._emit_overall_status(
+                session_id,
+                'completed',
+                f'Agent creation successful! "{agent_name}" is ready to test.',
+                agent_name=agent_name
+            )
+
         return spec
     
     def _build_instructions(self, req: UserRequirements, template: Dict) -> str:
