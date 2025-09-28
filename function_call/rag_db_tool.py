@@ -1,16 +1,20 @@
 import json
 import numpy as np
 import os
-from typing import Dict, Tuple, List
+from typing import Dict, Tuple, List, Union, Optional
 from openai import OpenAI
 
 # Try to import faiss, fall back to simple search if not available
 try:
     import faiss
     FAISS_AVAILABLE = True
+    # Type aliases for when faiss is available
+    FaissIndex = faiss.Index
 except ImportError:
     print("⚠️ FAISS not available, using simple text search fallback")
     FAISS_AVAILABLE = False
+    # Type alias for when faiss is not available
+    FaissIndex = None
 
 # Load OpenAI API key from environment variable
 from dotenv import load_dotenv
@@ -50,7 +54,7 @@ def embed_text(text: str) -> np.ndarray:
         print(f"⚠️ Failed to generate embedding: {e}")
         return np.zeros(1536, dtype=np.float32)
 
-def create_faiss_index() -> Tuple[faiss.Index, Dict[int, dict]]:
+def create_faiss_index() -> Tuple[Optional[FaissIndex], Dict[int, dict]]:
     """Create FAISS index for product search using OpenAI embeddings"""
     if not FAISS_AVAILABLE:
         print("⚠️ FAISS not available, returning None index")
