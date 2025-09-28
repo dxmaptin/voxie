@@ -17,10 +17,16 @@ from dotenv import load_dotenv
 load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
 if not api_key:
-    raise ValueError("OPENAI_API_KEY environment variable is not set.")
-
-# Initialize OpenAI client with API key
-client = OpenAI(api_key=api_key)
+    print("⚠️ OPENAI_API_KEY environment variable is not set. Some features will be disabled.")
+    client = None
+else:
+    try:
+        # Initialize OpenAI client with API key
+        client = OpenAI(api_key=api_key)
+        print("✅ OpenAI client initialized successfully")
+    except Exception as e:
+        print(f"⚠️ Failed to initialize OpenAI client: {e}")
+        client = None
 
 # Load product database
 with open('test_products.json', 'r') as f:
@@ -28,12 +34,21 @@ with open('test_products.json', 'r') as f:
 
 def embed_text(text: str) -> np.ndarray:
     """Generate embedding vector using OpenAI embeddings API"""
-    response = client.embeddings.create(
-        input=text,
-        model="text-embedding-3-small"  # or another available embedding model
-    )
-    embedding = response.data[0].embedding
-    return np.array(embedding, dtype=np.float32)
+    if client is None:
+        # Return a dummy embedding if OpenAI client is not available
+        print("⚠️ OpenAI client not available, returning dummy embedding")
+        return np.zeros(1536, dtype=np.float32)  # Standard embedding size
+
+    try:
+        response = client.embeddings.create(
+            input=text,
+            model="text-embedding-3-small"  # or another available embedding model
+        )
+        embedding = response.data[0].embedding
+        return np.array(embedding, dtype=np.float32)
+    except Exception as e:
+        print(f"⚠️ Failed to generate embedding: {e}")
+        return np.zeros(1536, dtype=np.float32)
 
 def create_faiss_index() -> Tuple[faiss.Index, Dict[int, dict]]:
     """Create FAISS index for product search using OpenAI embeddings"""
