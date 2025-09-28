@@ -7,5 +7,5 @@ livekit-plugins-noise-cancellation==0.2.5
 requests==2.31.0
 python-dotenv==1.0.0
 faiss-cpu==1.8.0
-numpy==1.24.3
+numpy>=1.26.0,<2.0.0
 openai==1.3.0
