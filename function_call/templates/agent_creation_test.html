@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-time Agent Creation Test</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input, select, textarea {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .progress-container {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 4px;
+            display: none;
+        }
+        .step {
+            padding: 8px;
+            margin: 5px 0;
+            border-radius: 4px;
+            border-left: 4px solid #ddd;
+        }
+        .step.started {
+            background: #fff3cd;
+            border-left-color: #ffc107;
+        }
+        .step.completed {
+            background: #d4edda;
+            border-left-color: #28a745;
+        }
+        .step.failed {
+            background: #f8d7da;
+            border-left-color: #dc3545;
+        }
+        .connection-status {
+            padding: 10px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+            text-align: center;
+        }
+        .connected {
+            background: #d4edda;
+            color: #155724;
+        }
+        .disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Real-time Agent Creation Test</h1>
+
+        <div id="connectionStatus" class="connection-status disconnected">
+            ❌ Disconnected from server
+        </div>
+
+        <form id="agentForm">
+            <div class="form-group">
+                <label for="businessName">Business Name:</label>
+                <input type="text" id="businessName" value="Mario's Pizza Palace" required>
+            </div>
+
+            <div class="form-group">
+                <label for="businessType">Business Type:</label>
+                <select id="businessType" required>
+                    <option value="pizza">Pizza Restaurant</option>
+                    <option value="restaurant">Restaurant</option>
+                    <option value="dental">Dental Office</option>
+                    <option value="retail">Retail Store</option>
+                    <option value="medical">Medical Clinic</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="targetAudience">Target Audience:</label>
+                <input type="text" id="targetAudience" value="families and pizza lovers">
+            </div>
+
+            <div class="form-group">
+                <label for="tone">Agent Tone:</label>
+                <select id="tone">
+                    <option value="friendly and enthusiastic">Friendly & Enthusiastic</option>
+                    <option value="professional">Professional</option>
+                    <option value="casual">Casual</option>
+                    <option value="caring">Caring</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="functions">Main Functions (comma-separated):</label>
+                <textarea id="functions" rows="3">take_order, menu_inquiry, store_hours</textarea>
+            </div>
+
+            <button type="submit" id="createBtn">🎯 Create Agent</button>
+        </form>
+
+        <div id="progressContainer" class="progress-container">
+            <h3>📊 Agent Creation Progress</h3>
+            <div id="progressSteps"></div>
+        </div>
+    </div>
+
+    <script>
+        // Initialize Socket.IO connection
+        const socket = io();
+        let currentSessionId = null;
+
+        // Connection status tracking
+        const statusElement = document.getElementById('connectionStatus');
+        const createBtn = document.getElementById('createBtn');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressSteps = document.getElementById('progressSteps');
+
+        socket.on('connect', () => {
+            statusElement.textContent = '✅ Connected to server';
+            statusElement.className = 'connection-status connected';
+            createBtn.disabled = false;
+        });
+
+        socket.on('disconnect', () => {
+            statusElement.textContent = '❌ Disconnected from server';
+            statusElement.className = 'connection-status disconnected';
+            createBtn.disabled = true;
+        });
+
+        // Agent creation events
+        socket.on('agent_creation_started', (data) => {
+            console.log('Agent creation started:', data);
+            currentSessionId = data.session_id;
+            progressContainer.style.display = 'block';
+            progressSteps.innerHTML = '<div class="step started">🚀 Agent creation initiated...</div>';
+        });
+
+        socket.on('agent_creation_update', (data) => {
+            console.log('Progress update:', data);
+            updateProgress(data);
+        });
+
+        socket.on('agent_creation_error', (data) => {
+            console.error('Agent creation error:', data);
+            addProgressStep('❌ Error: ' + data.error, 'failed');
+        });
+
+        // Form submission
+        document.getElementById('agentForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+
+            const requirements = {
+                business_name: document.getElementById('businessName').value,
+                business_type: document.getElementById('businessType').value,
+                target_audience: document.getElementById('targetAudience').value,
+                tone: document.getElementById('tone').value,
+                main_functions: document.getElementById('functions').value.split(',').map(f => f.trim())
+            };
+
+            const sessionId = 'web-test-' + Date.now();
+
+            console.log('Starting agent creation with requirements:', requirements);
+
+            socket.emit('start_agent_creation', {
+                session_id: sessionId,
+                requirements: requirements
+            });
+
+            createBtn.disabled = true;
+            createBtn.textContent = '⏳ Creating Agent...';
+        });
+
+        function updateProgress(data) {
+            const { step, status, message, error, agent_name, voice_model } = data;
+
+            let icon = '🔄';
+            if (status === 'completed') icon = '✅';
+            if (status === 'failed') icon = '❌';
+            if (status === 'started') icon = '🔄';
+
+            let displayMessage = `${icon} ${message}`;
+
+            if (agent_name) {
+                displayMessage += ` (${agent_name})`;
+            }
+
+            if (voice_model) {
+                displayMessage += ` - Voice: ${voice_model}`;
+            }
+
+            if (error) {
+                displayMessage += ` - Error: ${error}`;
+            }
+
+            addProgressStep(displayMessage, status);
+
+            // Re-enable button when done
+            if (step === 'overall' && (status === 'completed' || status === 'failed')) {
+                createBtn.disabled = false;
+                createBtn.textContent = '🎯 Create Agent';
+
+                if (status === 'completed') {
+                    addProgressStep('🎉 Agent creation completed successfully!', 'completed');
+                }
+            }
+        }
+
+        function addProgressStep(message, status) {
+            const stepDiv = document.createElement('div');
+            stepDiv.className = `step ${status}`;
+            stepDiv.textContent = message;
+
+            const timestamp = new Date().toLocaleTimeString();
+            stepDiv.title = `${timestamp}`;
+
+            progressSteps.appendChild(stepDiv);
+
+            // Auto-scroll to bottom
+            stepDiv.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // Auto-connect on page load
+        console.log('🔌 Attempting to connect to WebSocket server...');
+    </script>
+</body>
+</html>

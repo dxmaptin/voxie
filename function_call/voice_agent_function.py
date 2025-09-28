@@ -247,10 +247,16 @@ def function_call(user_query: str) -> Dict:
             except Exception as e:
                 print(f"⚠️ Semantic search failed: {e}")
         
-        # Fallback: use full database
+        # Fallback to simple text search if no semantic results
         if not candidates:
-            candidates = PRODUCT_DATABASE.copy()
-            print(f"📚 Using full database: {len(candidates)} products")
+            try:
+                from rag_db_tool import simple_text_search
+                candidates = simple_text_search(user_query, 20)
+                print(f"📝 Text search fallback: {len(candidates)} candidates")
+            except Exception as e:
+                print(f"⚠️ Text search fallback failed: {e}")
+                # Last resort: return all products
+                candidates = list(PRODUCT_DATABASE)
         
         # Step 3: Apply budget filter
         if budget_range:

@@ -1,0 +1,90 @@
+[
+  {
+    "timestamp": "2025-09-28T02:31:26.880561",
+    "session_id": "local_verification_20250928_023125",
+    "step": "scenario",
+    "status": "started",
+    "message": "Analyzing your business requirements...",
+    "error": null,
+    "extra_data": {}
+  },
+  {
+    "timestamp": "2025-09-28T02:31:28.881883",
+    "session_id": "local_verification_20250928_023125",
+    "step": "scenario",
+    "status": "completed",
+    "message": "Business type determined: Restaurant",
+    "error": null,
+    "extra_data": {}
+  },
+  {
+    "timestamp": "2025-09-28T02:31:28.882517",
+    "session_id": "local_verification_20250928_023125",
+    "step": "prompts",
+    "status": "started",
+    "message": "Creating custom prompts for restaurant agent...",
+    "error": null,
+    "extra_data": {}
+  },
+  {
+    "timestamp": "2025-09-28T02:31:30.883251",
+    "session_id": "local_verification_20250928_023125",
+    "step": "prompts",
+    "status": "completed",
+    "message": "Prompts created for restaurant agent",
+    "error": null,
+    "extra_data": {}
+  },
+  {
+    "timestamp": "2025-09-28T02:31:30.883941",
+    "session_id": "local_verification_20250928_023125",
+    "step": "voice",
+    "status": "started",
+    "message": "Setting up voice profile for \"Local Test Echo Pizza Restaurant Assistant\"...",
+    "error": null,
+    "extra_data": {
+      "agent_name": "Local Test Echo Pizza Restaurant Assistant"
+    }
+  },
+  {
+    "timestamp": "2025-09-28T02:31:30.884286",
+    "session_id": "local_verification_20250928_023125",
+    "step": "knowledge_base",
+    "status": "started",
+    "message": "Setting up knowledge base access...",
+    "error": null,
+    "extra_data": {}
+  },
+  {
+    "timestamp": "2025-09-28T02:31:31.885658",
+    "session_id": "local_verification_20250928_023125",
+    "step": "voice",
+    "status": "completed",
+    "message": "Voice profile ready - alloy",
+    "error": null,
+    "extra_data": {
+      "agent_name": "Local Test Echo Pizza Restaurant Assistant",
+      "voice_model": "alloy"
+    }
+  },
+  {
+    "timestamp": "2025-09-28T02:31:31.885904",
+    "session_id": "local_verification_20250928_023125",
+    "step": "knowledge_base",
+    "status": "completed",
+    "message": "Knowledge base connected",
+    "error": null,
+    "extra_data": {}
+  },
+  {
+    "timestamp": "2025-09-28T02:31:31.886135",
+    "session_id": "local_verification_20250928_023125",
+    "step": "overall",
+    "status": "completed",
+    "message": "Agent creation successful! \"Local Test Echo Pizza Restaurant Assistant\" is ready to test.",
+    "error": null,
+    "extra_data": {
+      "agent_name": "Local Test Echo Pizza Restaurant Assistant"
+    }
+  }
+]

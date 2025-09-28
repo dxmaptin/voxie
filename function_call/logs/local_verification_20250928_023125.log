@@ -1,0 +1,66 @@
+[02:31:25.684] HEADER: 🚀 Starting Local Verification Test
+[02:31:25.685] HEADER: ======================================================================
+[02:31:25.685] INFO: 📦 Step 1: Importing required modules...
+[02:31:26.880] INFO: ✅ LiveKit agent modules imported successfully
+[02:31:26.880] INFO: 🔧 Step 2: Setting up event capture system...
+[02:31:26.880] INFO: ✅ Event capture system ready
+[02:31:26.880] INFO: 🎯 Step 3: Creating test requirements...
+[02:31:26.880] INFO:    Business Name: Local Test Echo Pizza
+[02:31:26.880] INFO:    Business Type: pizza restaurant
+[02:31:26.880] INFO:    Target Audience: local customers
+[02:31:26.880] INFO:    Tone: friendly and welcoming
+[02:31:26.880] INFO:    Functions: ['take_order', 'menu_inquiry', 'delivery_info']
+[02:31:26.880] INFO: 🏗️ Step 4: Creating ProcessingAgent with event capture...
+[02:31:26.880] INFO:    Session ID: local_verification_20250928_023125
+[02:31:26.880] INFO: ✅ ProcessingAgent created
+[02:31:26.880] INFO: ⚡ Step 5: Running agent creation pipeline...
+[02:31:26.880] INFO:    (This will take 5-10 seconds and generate real-time events)
+[02:31:26.880] EVENT: 📡 scenario:started - Analyzing your business requirements...
+[02:31:28.881] EVENT: 📡 scenario:completed - Business type determined: Restaurant
+[02:31:28.882] EVENT: 📡 prompts:started - Creating custom prompts for restaurant agent...
+[02:31:30.883] EVENT: 📡 prompts:completed - Prompts created for restaurant agent
+[02:31:30.883] EVENT: 📡 voice:started - Setting up voice profile for "Local Test Echo Pizza Restaurant Assistant"... | Agent: Local Test Echo Pizza Restaurant Assistant
+[02:31:30.884] EVENT: 📡 knowledge_base:started - Setting up knowledge base access...
+[02:31:31.885] EVENT: 📡 voice:completed - Voice profile ready - alloy | Agent: Local Test Echo Pizza Restaurant Assistant | Voice: alloy
+[02:31:31.885] EVENT: 📡 knowledge_base:completed - Knowledge base connected
+[02:31:31.886] EVENT: 📡 overall:completed - Agent creation successful! "Local Test Echo Pizza Restaurant Assistant" is ready to test. | Agent: Local Test Echo Pizza Restaurant Assistant
+[02:31:31.886] SUCCESS: ✅ Agent creation completed successfully!
+[02:31:31.886] SUCCESS:    Duration: 5.01 seconds
+[02:31:31.886] INFO: 📊 Step 6: Analyzing results...
+[02:31:31.886] INFO:    Agent Type: Local Test Echo Pizza Restaurant Assistant
+[02:31:31.886] INFO:    Voice Model: alloy
+[02:31:31.886] INFO:    Business Context: {'business_type': 'restaurant', 'business_name': 'Local Test Echo Pizza', 'tone': 'friendly and welcoming', 'functions': ['take_order', 'menu_inquiry', 'delivery_info']}
+[02:31:31.886] INFO:    Functions: 2 configured
+[02:31:31.886] INFO:    Sample Response: Thank you for calling Local Test Echo Pizza! How can I help you today?
+[02:31:31.886] INFO: ✅ Step 7: Verifying real-time events...
+[02:31:31.886] INFO:    Total events captured: 9
+[02:31:31.886] INFO:    Event sequence verification:
+[02:31:31.886] SUCCESS:    ✅ 1. scenario:started
+[02:31:31.886] SUCCESS:    ✅ 2. scenario:completed
+[02:31:31.886] SUCCESS:    ✅ 3. prompts:started
+[02:31:31.886] SUCCESS:    ✅ 4. prompts:completed
+[02:31:31.886] SUCCESS:    ✅ 5. voice:started
+[02:31:31.887] SUCCESS:    ✅ 6. voice:completed
+[02:31:31.887] SUCCESS:    ✅ 7. knowledge_base:started
+[02:31:31.887] SUCCESS:    ✅ 8. knowledge_base:completed
+[02:31:31.887] SUCCESS:    ✅ 9. overall:completed
+[02:31:31.887] INFO: 🎵 Step 8: Voice model verification...
+[02:31:31.887] INFO:    Voice model used: alloy
+[02:31:31.887] INFO:    ℹ️ Default voice model used: alloy (pizza template)
+[02:31:31.887] INFO: 💾 Step 9: Saving detailed logs...
+[02:31:31.887] INFO:    Events saved to: logs/events_20250928_023125.json
+[02:31:31.887] INFO:    Agent spec saved to: logs/agent_spec_20250928_023125.json
+[02:31:31.887] INFO:    Full log saved to: logs/local_verification_20250928_023125.log
+[02:31:31.887] HEADER: ======================================================================
+[02:31:31.887] HEADER: 🎉 LOCAL VERIFICATION RESULTS
+[02:31:31.887] HEADER: ======================================================================
+[02:31:31.888] SUCCESS: ✅ ALL TESTS PASSED!
+[02:31:31.888] SUCCESS: ✅ Real-time agent creation is working
+[02:31:31.888] SUCCESS: ✅ Event broadcasting is functional
+[02:31:31.888] SUCCESS: ✅ Agent specifications are correct
+[02:31:31.888] HEADER: ======================================================================
+[02:31:31.888] INFO: 📋 For your frontend integration:
+[02:31:31.888] INFO:    1. Use WebSocket to connect to your server
+[02:31:31.888] INFO:    2. Listen for 'agent_creation_update' events
+[02:31:31.888] INFO:    3. Each event contains: step, status, message, extra_data
+[02:31:31.888] INFO:    4. Monitor for 'overall:completed' to know when done

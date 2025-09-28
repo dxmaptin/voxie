@@ -1,9 +1,16 @@
 import json
 import numpy as np
-import faiss
 import os
-from typing import Dict, Tuple
+from typing import Dict, Tuple, List
 from openai import OpenAI
+
+# Try to import faiss, fall back to simple search if not available
+try:
+    import faiss
+    FAISS_AVAILABLE = True
+except ImportError:
+    print("⚠️ FAISS not available, using simple text search fallback")
+    FAISS_AVAILABLE = False
 
 # Load OpenAI API key from environment variable
 from dotenv import load_dotenv
@@ -30,6 +37,10 @@ def embed_text(text: str) -> np.ndarray:
 
 def create_faiss_index() -> Tuple[faiss.Index, Dict[int, dict]]:
     """Create FAISS index for product search using OpenAI embeddings"""
+    if not FAISS_AVAILABLE:
+        print("⚠️ FAISS not available, returning None index")
+        return None, {}
+    
     print("Creating FAISS index with OpenAI embeddings...")
     
     embeddings = []
@@ -48,6 +59,27 @@ def create_faiss_index() -> Tuple[faiss.Index, Dict[int, dict]]:
     
     print(f"✅ Created FAISS index with {len(embeddings)} products")
     return index, id_to_product
+
+def simple_text_search(query: str, limit: int = 5) -> List[dict]:
+    """Simple text-based search fallback when FAISS is not available"""
+    query_lower = query.lower()
+    results = []
+    
+    for product in PRODUCT_DATABASE:
+        score = 0
+        text = f"{product['name']} {product['category']} {product['description']} {' '.join(product.get('features', []))}".lower()
+        
+        # Simple keyword matching
+        for word in query_lower.split():
+            if word in text:
+                score += 1
+        
+        if score > 0:
+            results.append((score, product))
+    
+    # Sort by score and return top results
+    results.sort(key=lambda x: x[0], reverse=True)
+    return [product for score, product in results[:limit]]
 
 def load_index_and_mapping():
     """Load or create FAISS index and id-to-product mapping"""
