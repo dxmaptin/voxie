@@ -436,6 +436,9 @@ if __name__ == '__main__':
 
     print("🚀 Starting Voice Agent Product Search Webhook Server")
     print("=" * 60)
+    print(f"🎯 Environment: {os.environ.get('ENV', 'development')}")
+    print(f"🌐 Host: {host}")
+    print(f"🔌 Port: {port}")
     print("📡 API Endpoints:")
     print("  • POST /search_products - Main search endpoint")
     print("  • GET  /search_products?q=query - URL search")
@@ -468,5 +471,10 @@ if __name__ == '__main__':
         print("🔧 Running in DEVELOPMENT mode")
     print("=" * 60)
 
-    # Use SocketIO run instead of Flask run for WebSocket support
-    socketio.run(app, host=host, port=port, debug=debug, allow_unsafe_werkzeug=True)
+    # Check if running under Gunicorn
+    if os.environ.get('SERVER_SOFTWARE', '').startswith('gunicorn'):
+        # Running under Gunicorn - don't call socketio.run()
+        print("🚀 Running under Gunicorn - SocketIO integrated")
+    else:
+        # Development mode - use SocketIO run
+        socketio.run(app, host=host, port=port, debug=debug, allow_unsafe_werkzeug=True)
