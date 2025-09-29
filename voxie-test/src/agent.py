@@ -7,6 +7,7 @@ import asyncio
 import logging
 import os
 import uuid
+import time
 
 from livekit import agents
 from livekit.agents import AgentSession, Agent, RoomInputOptions
@@ -81,6 +82,199 @@ class ProcessedAgentSpec:
     business_context: Dict[str, Any]
 
 
+@dataclass
+class ProcessingRetryConfig:
+    """Configuration for processing timeouts and retries"""
+    max_attempts: int = 5
+    timeout_per_attempt: int = 120  # seconds
+    total_timeout: int = 600        # 10 minutes total
+    backoff_multiplier: float = 1.5
+    backoff_base_delay: int = 2     # seconds
+
+    def get_attempt_timeout(self, attempt: int) -> int:
+        """Calculate timeout for specific attempt with exponential backoff"""
+        base_timeout = self.timeout_per_attempt
+        multiplied_timeout = base_timeout * (self.backoff_multiplier ** (attempt - 1))
+        return min(int(multiplied_timeout), 300)  # Max 5 minutes per attempt
+
+
+@dataclass
+class ProcessingResult:
+    """Result of agent processing operation"""
+    success: bool
+    data: Optional[ProcessedAgentSpec] = None
+    failure_reason: Optional[str] = None
+    failure_type: Optional[str] = None
+    attempts_made: int = 0
+    total_duration: float = 0.0
+    user_message: str = ""
+
+    @classmethod
+    def success_result(cls, data: ProcessedAgentSpec, attempts: int, duration: float):
+        return cls(
+            success=True,
+            data=data,
+            attempts_made=attempts,
+            total_duration=duration,
+            user_message=f"Successfully created your agent in {attempts} attempt(s)!"
+        )
+
+    @classmethod
+    def failure_result(cls, failure_type: str, reason: str, attempts: int, duration: float, user_msg: str):
+        return cls(
+            success=False,
+            failure_type=failure_type,
+            failure_reason=reason,
+            attempts_made=attempts,
+            total_duration=duration,
+            user_message=user_msg
+        )
+
+
+class FailureHandler:
+    """Handles various failure scenarios and user communication"""
+
+    @staticmethod
+    def handle_timeout_failure(attempts: int, duration: float) -> ProcessingResult:
+        """Handle processing timeout failures"""
+        user_message = f"""I tried creating your agent {attempts} times but ran into technical issues.
+The conversation will end now to avoid keeping you waiting longer.
+
+What happened: Agent creation process timed out after multiple attempts.
+
+Please try again later, and if this keeps happening, contact our support team."""
+
+        return ProcessingResult.failure_result(
+            "timeout",
+            f"Processing timed out after {attempts} attempts",
+            attempts,
+            duration,
+            user_message
+        )
+
+    @staticmethod
+    def handle_max_attempts_failure(attempts: int, last_error: str, duration: float) -> ProcessingResult:
+        """Handle max attempts exceeded failures"""
+        user_message = f"""I tried creating your agent {attempts} times but ran into persistent technical issues.
+The conversation will end now to avoid further delays.
+
+What happened: Technical error during agent creation process.
+
+Our team has been notified. Please try again later or contact support if this continues."""
+
+        return ProcessingResult.failure_result(
+            "max_attempts",
+            f"Failed after {attempts} attempts. Last error: {last_error}",
+            attempts,
+            duration,
+            user_message
+        )
+
+    @staticmethod
+    def handle_total_timeout_failure(duration: float) -> ProcessingResult:
+        """Handle total timeout exceeded failures"""
+        user_message = f"""Agent creation has been running for over 10 minutes, which is much longer than expected.
+I'm stopping the process now.
+
+What happened: Total processing time exceeded our safety limits.
+
+Please try again later when our systems might be less busy."""
+
+        return ProcessingResult.failure_result(
+            "total_timeout",
+            f"Total processing time exceeded {duration:.1f} seconds",
+            0,
+            duration,
+            user_message
+        )
+
+
+class ProcessingManager:
+    """Manages agent creation with timeout and retry capabilities"""
+
+    def __init__(self, config: ProcessingRetryConfig = None):
+        self.config = config or ProcessingRetryConfig()
+        self.attempt_count = 0
+        self.total_start_time = None
+        self.current_session_id = None
+
+    async def process_with_retry(self, processing_agent, requirements, session_id: str = None) -> ProcessingResult:
+        """Main processing loop with timeout and retry logic"""
+
+        self.total_start_time = time.time()
+        self.current_session_id = session_id
+        last_error = None
+
+        for attempt in range(1, self.config.max_attempts + 1):
+            self.attempt_count = attempt
+
+            # Check total timeout
+            if self._is_total_timeout_exceeded():
+                duration = time.time() - self.total_start_time
+                return FailureHandler.handle_total_timeout_failure(duration)
+
+            # Log attempt
+            logger.info(f"🔄 Processing attempt {attempt}/{self.config.max_attempts}")
+
+            try:
+                # Execute with timeout
+                attempt_timeout = self.config.get_attempt_timeout(attempt)
+                logger.info(f"⏰ Attempt {attempt} timeout: {attempt_timeout}s")
+
+                result = await asyncio.wait_for(
+                    self._execute_single_attempt(processing_agent, requirements, session_id),
+                    timeout=attempt_timeout
+                )
+
+                # Success!
+                duration = time.time() - self.total_start_time
+                logger.info(f"✅ Processing succeeded on attempt {attempt} in {duration:.1f}s")
+                return ProcessingResult.success_result(result, attempt, duration)
+
+            except asyncio.TimeoutError:
+                last_error = f"Timeout after {attempt_timeout}s"
+                logger.error(f"⏰ Attempt {attempt} timed out after {attempt_timeout}s")
+
+                if attempt == self.config.max_attempts:
+                    break
+
+                await self._backoff_delay(attempt)
+
+            except Exception as e:
+                last_error = str(e)
+                logger.error(f"❌ Attempt {attempt} failed: {e}")
+
+                if attempt == self.config.max_attempts:
+                    break
+
+                await self._backoff_delay(attempt)
+
+        # All attempts failed
+        duration = time.time() - self.total_start_time
+        return FailureHandler.handle_max_attempts_failure(
+            self.config.max_attempts,
+            last_error or "Unknown error",
+            duration
+        )
+
+    async def _execute_single_attempt(self, processing_agent, requirements, session_id: str):
+        """Execute a single processing attempt"""
+        return await processing_agent.process_requirements(requirements, session_id)
+
+    def _is_total_timeout_exceeded(self) -> bool:
+        """Check if total timeout has been exceeded"""
+        if not self.total_start_time:
+            return False
+        return (time.time() - self.total_start_time) > self.config.total_timeout
+
+    async def _backoff_delay(self, attempt: int) -> None:
+        """Wait with exponential backoff before next attempt"""
+        delay = self.config.backoff_base_delay * (self.config.backoff_multiplier ** (attempt - 1))
+        delay = min(delay, 30)  # Max 30 second delay
+        logger.info(f"💤 Waiting {delay:.1f}s before next attempt...")
+        await asyncio.sleep(delay)
+
+
 class AgentManager:
     def __init__(self, event_broadcaster=None):
         self.state = AgentState.VOXIE_ACTIVE
@@ -149,7 +343,7 @@ class AgentManager:
         self.current_session_id = session_id
 
     async def transition_to_processing(self, session_id: str = None):
-        """Start background processing of requirements"""
+        """Start background processing with timeout and retry"""
         if session_id:
             self.current_session_id = session_id
 
@@ -165,73 +359,79 @@ class AgentManager:
                 'Starting agent creation process...'
             )
 
-        # Start small talk while processing
+        # Initial user engagement
         if self.current_session:
             logger.info("💬 Starting small talk during processing")
             await self.current_session.generate_reply(
-                instructions="Keep the user engaged with friendly small talk while I process their requirements. Say something like: 'Great! I'm working on creating your custom agent right now. This should only take a few moments. While I'm processing everything, is there anything specific you'd like your agent to be particularly good at?'"
+                instructions="Great! I'm working on creating your custom agent right now. This should only take a few moments. I'll let you know how it's going!"
             )
 
-        # Process requirements in background with periodic updates
-        logger.info("🏗️ Starting requirements processing...")
+        # Initialize processing with timeout and retry
+        logger.info("🏗️ Starting requirements processing with timeout protection...")
+        config = ProcessingRetryConfig()
+        processing_manager = ProcessingManager(config)
         processing_agent = ProcessingAgent(event_broadcaster=self.event_broadcaster)
 
-        try:
-            # Start processing with real-time updates
-            processing_task = asyncio.create_task(
-                processing_agent.process_requirements(self.user_requirements, self.current_session_id)
-            )
+        # Process with resilience
+        result = await processing_manager.process_with_retry(
+            processing_agent,
+            self.user_requirements,
+            self.current_session_id
+        )
 
-            # Engage user during processing
-            engagement_count = 0
-            while not processing_task.done():
-                await asyncio.sleep(3)  # Wait 3 seconds
-                if not processing_task.done() and self.current_session and engagement_count < 2:
-                    engagement_count += 1
-                    logger.info(f"💬 Engaging user during processing (attempt {engagement_count})")
+        # Handle result
+        if result.success:
+            await self._handle_processing_success(result)
+        else:
+            await self._handle_processing_failure(result)
 
-                    if engagement_count == 1:
-                        await self.current_session.generate_reply(
-                            instructions="Keep the conversation going! Say something like: 'I'm configuring your agent's personality and functions right now. It's going to have access to our comprehensive knowledge base too, which is really exciting!'"
-                        )
-                    elif engagement_count == 2:
-                        await self.current_session.generate_reply(
-                            instructions="Almost done! Say something like: 'Just putting the finishing touches on your agent now. I think you're going to love how it turns out!'"
-                        )
-
-            # Get the result
-            self.processed_spec = await processing_task
-            logger.info(f"✅ Processing complete! Created spec: {self.processed_spec.agent_type}")
-
-        except Exception as e:
-            logger.error(f"❌ Processing failed: {e}")
-
-            # Emit error to frontend
-            if self.event_broadcaster and self.current_session_id:
-                self._emit_overall_status(
-                    self.current_session_id,
-                    'failed',
-                    'Agent creation failed',
-                    error=str(e)
-                )
-
-            if self.current_session:
-                await self.current_session.generate_reply(
-                    instructions="I'm sorry, there was an issue creating your agent. Let me try again or help you with something else."
-                )
-            return
-
+    async def _handle_processing_success(self, result: ProcessingResult):
+        """Handle successful processing"""
+        self.processed_spec = result.data
         self.state = AgentState.DEMO_READY
-        logger.info("✅ State changed to DEMO_READY")
-        logger.info("📢 Demo agent ready for handoff")
+        logger.info(f"✅ Processing complete! Created spec: {self.processed_spec.agent_type}")
+        logger.info(f"📊 Success after {result.attempts_made} attempt(s) in {result.total_duration:.1f}s")
 
-        # Notify Voxie that demo is ready with more engaging message
-        if self.current_session and self.state == AgentState.DEMO_READY:
-            logger.info("💬 Notifying user that demo is ready")
-            await self.current_session.generate_reply(
-                instructions=f"Fantastic! Your {self.processed_spec.agent_type} is now ready to test! I've configured it with all the features you requested, including access to our comprehensive knowledge base. Would you like to try it out right now? Just say 'yes' or 'let's test it' and I'll connect you to your new agent!"
+        # Emit success to frontend
+        if self.event_broadcaster and self.current_session_id:
+            self._emit_overall_status(
+                self.current_session_id,
+                'completed',
+                f'Agent created successfully after {result.attempts_made} attempt(s)',
+                agent_type=self.processed_spec.agent_type
             )
-        
+
+        # Notify user of success
+        if self.current_session:
+            await self.current_session.generate_reply(
+                instructions=f"Fantastic! Your {self.processed_spec.agent_type} is now ready to test! I've configured it with all the features you requested. Would you like to try it out right now?"
+            )
+
+    async def _handle_processing_failure(self, result: ProcessingResult):
+        """Handle processing failure with clear communication"""
+        logger.error(f"❌ Processing failed: {result.failure_reason}")
+        logger.error(f"📊 Failure after {result.attempts_made} attempt(s) in {result.total_duration:.1f}s")
+        logger.error(f"🔍 Failure type: {result.failure_type}")
+
+        # Emit failure event
+        if self.event_broadcaster and self.current_session_id:
+            self._emit_overall_status(
+                self.current_session_id,
+                'failed',
+                f'Agent creation failed after {result.attempts_made} attempts',
+                error=result.failure_reason
+            )
+
+        # Inform user with specific failure reason
+        if self.current_session:
+            await self.current_session.generate_reply(
+                instructions=f"I need to let you know: {result.user_message}"
+            )
+
+        # Reset state to allow new attempts
+        self.state = AgentState.VOXIE_ACTIVE
+        logger.info("🔄 State reset to VOXIE_ACTIVE for new attempts")
+
     async def handoff_to_demo(self, room):
         """Handoff from Voxie to Demo agent"""
         logger.info(f"🔄 Handoff requested. Current state: {self.state}")
@@ -741,7 +941,12 @@ class ProcessingAgent:
     def __init__(self, event_broadcaster=None):
         """Initialize with optional event broadcaster for real-time updates"""
         self.event_broadcaster = event_broadcaster
-    
+
+    def _emit_event(self, session_id: str, step_name: str, status: str, message: str, error: Optional[str] = None, **extra_data):
+        """Emit events to event broadcaster"""
+        if self.event_broadcaster:
+            self.event_broadcaster.emit_step(session_id, step_name, status, message, error, **extra_data)
+
     BUSINESS_TEMPLATES = {
         "restaurant": {
             "voice": "alloy",  # Different from Voxie's coral
