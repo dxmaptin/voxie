@@ -30,13 +30,23 @@ app.config['JSONIFY_PRETTYPRINT_REGULAR'] = True
 search_history = []
 
 # Import and initialize event broadcaster and agent integration
+event_broadcaster = None
+agent_integrator = None
+
 try:
     from event_broadcaster import initialize_broadcaster
-    from agent_integration import initialize_agent_integrator
-
     event_broadcaster = initialize_broadcaster(socketio)
-    agent_integrator = initialize_agent_integrator(event_broadcaster)
-    print("✅ Event broadcaster and agent integrator initialized")
+    print("✅ Event broadcaster initialized")
+
+    # Only initialize agent integrator if not running under Gunicorn
+    # LiveKit agents require main thread registration
+    if not os.environ.get('SERVER_SOFTWARE', '').startswith('gunicorn'):
+        from agent_integration import initialize_agent_integrator
+        agent_integrator = initialize_agent_integrator(event_broadcaster)
+        print("✅ Agent integrator initialized")
+    else:
+        print("⚠️ Agent integrator disabled for Gunicorn (production mode)")
+
 except ImportError as e:
     print(f"❌ Failed to import required modules: {e}")
     event_broadcaster = None
