@@ -6,6 +6,7 @@ import json
 import asyncio
 import logging
 import os
+import uuid
 
 from livekit import agents
 from livekit.agents import AgentSession, Agent, RoomInputOptions
@@ -33,6 +34,22 @@ try:
 except ImportError:
     console_event_broadcaster = None
     print("⚠️ Console broadcaster not available")
+
+# Progress templates for safe messaging
+try:
+    from progress_templates import (
+        get_voice_announcement,
+        get_detailed_message,
+        should_announce_voice,
+        format_progress_update
+    )
+    print("✅ Progress templates loaded")
+except ImportError:
+    print("⚠️ Progress templates not available")
+    get_voice_announcement = lambda step, status: f"Agent creation {status}"
+    get_detailed_message = lambda step, status: f"Agent creation step {step} {status}"
+    should_announce_voice = lambda step, status: True
+    format_progress_update = lambda step, status, session_id: {}
 
 
 class AgentState(Enum):
@@ -502,6 +519,69 @@ OUTCOMES TO TRACK
 """
         )
 
+        # Initialize progress callback system for bidirectional communication
+        self.current_session_for_announcements = None
+        self.registered_sessions = set()
+
+    async def on_agent_creation_progress(self, step_name: str, status: str, message: str):
+        """
+        Callback function for progress updates during agent creation
+        Provides voice announcements to user while agent is being created
+        """
+        try:
+            # Get safe voice announcement message (zero hallucination risk)
+            voice_message = get_voice_announcement(step_name, status)
+
+            # Only announce important milestones to avoid noise
+            if should_announce_voice(step_name, status) and self.current_session_for_announcements:
+                logger.info(f"🎙️ Announcing progress: {step_name}:{status} - {voice_message}")
+
+                # Announce progress to user
+                await self.current_session_for_announcements.generate_reply(
+                    instructions=f"Briefly tell the user: {voice_message}"
+                )
+
+                logger.debug(f"✅ Progress announced: {voice_message}")
+            else:
+                logger.debug(f"📝 Progress logged (not announced): {step_name}:{status}")
+
+        except Exception as e:
+            logger.warning(f"⚠️ Progress announcement failed: {e}")
+
+    def register_for_progress_updates(self, session_id: str):
+        """
+        Register this Voxie agent to receive progress updates for agent creation
+        """
+        if production_bridge and session_id:
+            try:
+                production_bridge.register_agent_session(
+                    session_id,
+                    self.on_agent_creation_progress
+                )
+                self.registered_sessions.add(session_id)
+                logger.info(f"🤖 Voxie registered for progress updates: {session_id}")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to register for progress updates: {e}")
+
+    def unregister_progress_updates(self, session_id: str):
+        """
+        Unregister from progress updates when session ends
+        """
+        if production_bridge and session_id in self.registered_sessions:
+            try:
+                production_bridge.unregister_agent_session(session_id)
+                self.registered_sessions.discard(session_id)
+                logger.info(f"🤖 Voxie unregistered from progress updates: {session_id}")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to unregister from progress updates: {e}")
+
+    def set_announcement_session(self, session):
+        """
+        Set the current session for voice announcements
+        """
+        self.current_session_for_announcements = session
+        logger.debug("🎙️ Voice announcement session set")
+
     @function_tool
     async def store_user_requirement(self, requirement_type: str, value: str):
         """Store a user requirement during the conversation"""
@@ -571,6 +651,12 @@ OUTCOMES TO TRACK
         print(f"🎯 Starting agent creation for: {agent_manager.user_requirements.business_name}")
         print("📡 Real-time events will appear below:")
         print("=" * 50)
+
+        # Register Voxie agent for progress callbacks and set announcement session
+        voxie_agent = VoxieAgent()
+        voxie_agent.set_announcement_session(agent_manager.current_session)
+        voxie_agent.register_for_progress_updates(session_id)
+
         asyncio.create_task(agent_manager.transition_to_processing(session_id))
 
         return "Perfect! I have all the information I need. Give me a few seconds to process everything and create your custom voice AI agent..."
