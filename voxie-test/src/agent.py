@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Any
 import json
 import asyncio
 import logging
+import threading
 
 from livekit import agents
 from livekit.agents import AgentSession, Agent, RoomInputOptions
@@ -14,6 +15,17 @@ from knowledge_base_tools import KnowledgeBaseTools
 
 load_dotenv(".env.local")
 logger = logging.getLogger("multi-agent")
+
+REQUIREMENT_TYPE_MAP = {
+    "business_name": ["business_name", "name", "company_name"],
+    "business_type": ["business_type", "industry", "sector", "business_industry", "cuisine"],
+    "main_functions": ["function", "functions", "task", "tasks", "responsibility", "job", "agent_function", "capabilities", "roles"],
+    "tone": ["tone", "personality", "agent_tone", "style"],
+    "target_audience": ["audience", "target", "user_type", "end_user"],
+    "operating_hours": ["hours", "operating", "open_times"],
+    "contact_info": ["contact", "contact_email", "contact_phone", "contact_number"],
+    "special_requirements": ["special", "requirement", "note", "instruction", "custom", "extra"],
+}
 
 
 class AgentState(Enum):
@@ -397,48 +409,64 @@ OUTCOMES TO TRACK
 """
         )
 
+    def normalize_req_type(req_type: str) -> str:
+        req_type_lower = req_type.lower().replace(" ", "_")
+        for internal_type, aliases in REQUIREMENT_TYPE_MAP.items():
+            if any(alias in req_type_lower for alias in aliases):
+                return internal_type
+        return "unknown"
+
+
     @function_tool
     async def store_user_requirement(self, requirement_type: str, value: str):
-        """Store a user requirement during the conversation"""
         logger.info(f"📝 Storing requirement: {requirement_type} = {value}")
 
-        # Handle various requirement types that Voxie might use
-        req_type_lower = requirement_type.lower()
+        normalized_type = VoxieAgent.normalize_req_type(requirement_type)
 
-        if "business_name" in req_type_lower or "name" in req_type_lower:
-            agent_manager.user_requirements.business_name = value
-            logger.info(f"✅ Set business name: {value}")
-        elif "business_type" in req_type_lower or "industry" in req_type_lower or "business_industry" in req_type_lower:
-            agent_manager.user_requirements.business_type = value
-            logger.info(f"✅ Set business type: {value}")
-        elif "cuisine" in req_type_lower:
-            agent_manager.user_requirements.business_type = f"{value} Restaurant"
-            logger.info(f"✅ Set cuisine type: {value} Restaurant")
-        elif "function" in req_type_lower or "agent_function" in req_type_lower:
-            agent_manager.user_requirements.main_functions.extend(value.split(", "))
-            logger.info(f"✅ Added functions: {value}")
-        elif "tone" in req_type_lower or "personality" in req_type_lower or "agent_tone" in req_type_lower:
-            agent_manager.user_requirements.tone = value
-            logger.info(f"✅ Set tone: {value}")
-        elif "audience" in req_type_lower or "target" in req_type_lower:
-            agent_manager.user_requirements.target_audience = value
-            logger.info(f"✅ Set audience: {value}")
-        elif "hours" in req_type_lower or "operating" in req_type_lower:
-            agent_manager.user_requirements.special_requirements.append(f"Operating hours: {value}")
-            logger.info(f"✅ Added hours: {value}")
-        elif "special" in req_type_lower or "requirement" in req_type_lower:
-            agent_manager.user_requirements.special_requirements.append(value)
-            logger.info(f"✅ Added special requirement: {value}")
-        elif "contact" in req_type_lower:
-            contact_type = req_type_lower.replace("contact_", "")
-            agent_manager.user_requirements.contact_info[contact_type] = value
-            logger.info(f"✅ Added contact info: {contact_type} = {value}")
-        else:
-            # Generic storage for any other requirement types
-            agent_manager.user_requirements.special_requirements.append(f"{requirement_type}: {value}")
-            logger.info(f"✅ Added generic requirement: {requirement_type} = {value}")
+        match normalized_type:
+            case "business_name":
+                agent_manager.user_requirements.business_name = value
+                logger.info(f"✅ Set business name: {value}")
 
-        # Log current state of all requirements
+            case "business_type":
+                if "restaurant" in requirement_type.lower() or "cuisine" in requirement_type.lower():
+                    value = f"{value} Restaurant"
+                agent_manager.user_requirements.business_type = value
+                logger.info(f"✅ Set business type: {value}")
+
+            case "main_functions":
+                functions = [f.strip() for f in value.split(",") if f.strip()]
+                agent_manager.user_requirements.main_functions.extend(functions)
+                logger.info(f"✅ Added functions: {functions}")
+
+            case "tone":
+                agent_manager.user_requirements.tone = value
+                logger.info(f"✅ Set tone: {value}")
+
+            case "target_audience":
+                agent_manager.user_requirements.target_audience = value
+                logger.info(f"✅ Set audience: {value}")
+
+            case "operating_hours":
+                agent_manager.user_requirements.special_requirements.append(f"Operating hours: {value}")
+                logger.info(f"✅ Added operating hours: {value}")
+
+            case "contact_info":
+                # Try to extract contact type (e.g., "email", "phone")
+                contact_key = requirement_type.lower().replace("contact_", "")
+                agent_manager.user_requirements.contact_info[contact_key] = value
+                logger.info(f"✅ Added contact info: {contact_key} = {value}")
+
+            case "special_requirements":
+                agent_manager.user_requirements.special_requirements.append(value)
+                logger.info(f"✅ Added special requirement: {value}")
+
+            case _:
+                # Fallback for anything else
+                agent_manager.user_requirements.special_requirements.append(f"{requirement_type}: {value}")
+                logger.warning(f"⚠️ Unclassified requirement. Saved under special requirements: {requirement_type}: {value}")
+
+        # Summary log
         logger.info(f"📊 Current requirements summary:")
         logger.info(f"   🏢 Business: {agent_manager.user_requirements.business_name}")
         logger.info(f"   🏷️ Type: {agent_manager.user_requirements.business_type}")
@@ -446,15 +474,71 @@ OUTCOMES TO TRACK
 
         return f"Stored {requirement_type}: {value}"
 
+
+    # async def store_user_requirement(self, requirement_type: str, value: str):
+    #     """Store a user requirement during the conversation"""
+    #     logger.info(f"📝 Storing requirement: {requirement_type} = {value}")
+
+    #     # Handle various requirement types that Voxie might use
+    #     req_type_lower = requirement_type.lower()
+
+    #     if "business_name" in req_type_lower or "name" in req_type_lower:
+    #         agent_manager.user_requirements.business_name = value
+    #         logger.info(f"✅ Set business name: {value}")
+    #     elif "business_type" in req_type_lower or "industry" in req_type_lower or "business_industry" in req_type_lower:
+    #         agent_manager.user_requirements.business_type = value
+    #         logger.info(f"✅ Set business type: {value}")
+    #     elif "cuisine" in req_type_lower:
+    #         agent_manager.user_requirements.business_type = f"{value} Restaurant"
+    #         logger.info(f"✅ Set cuisine type: {value} Restaurant")
+    #     elif "function" in req_type_lower or "agent_function" in req_type_lower:
+    #         agent_manager.user_requirements.main_functions.extend(value.split(", "))
+    #         logger.info(f"✅ Added functions: {value}")
+    #     elif "tone" in req_type_lower or "personality" in req_type_lower or "agent_tone" in req_type_lower:
+    #         agent_manager.user_requirements.tone = value
+    #         logger.info(f"✅ Set tone: {value}")
+    #     elif "audience" in req_type_lower or "target" in req_type_lower:
+    #         agent_manager.user_requirements.target_audience = value
+    #         logger.info(f"✅ Set audience: {value}")
+    #     elif "hours" in req_type_lower or "operating" in req_type_lower:
+    #         agent_manager.user_requirements.special_requirements.append(f"Operating hours: {value}")
+    #         logger.info(f"✅ Added hours: {value}")
+    #     elif "special" in req_type_lower or "requirement" in req_type_lower:
+    #         agent_manager.user_requirements.special_requirements.append(value)
+    #         logger.info(f"✅ Added special requirement: {value}")
+    #     elif "contact" in req_type_lower:
+    #         contact_type = req_type_lower.replace("contact_", "")
+    #         agent_manager.user_requirements.contact_info[contact_type] = value
+    #         logger.info(f"✅ Added contact info: {contact_type} = {value}")
+    #     else:
+    #         # Generic storage for any other requirement types
+    #         agent_manager.user_requirements.special_requirements.append(f"{requirement_type}: {value}")
+    #         logger.info(f"✅ Added generic requirement: {requirement_type} = {value}")
+
+    #     # Log current state of all requirements
+    #     logger.info(f"📊 Current requirements summary:")
+    #     logger.info(f"   🏢 Business: {agent_manager.user_requirements.business_name}")
+    #     logger.info(f"   🏷️ Type: {agent_manager.user_requirements.business_type}")
+    #     logger.info(f"   🎯 Functions: {agent_manager.user_requirements.main_functions}")
+
+    #     return f"Stored {requirement_type}: {value}"
+
     @function_tool
     async def finalize_requirements(self):
         """Finalize requirements and start processing"""
         logger.info("🎯 FINALIZE_REQUIREMENTS called")
 
         # Check if we have minimum requirements
-        if not agent_manager.user_requirements.business_name and not agent_manager.user_requirements.business_type:
-            logger.warning("⚠️ No business requirements stored yet")
-            return "I need a bit more information first. What type of business would you like to create an agent for?"
+        # Check if business name is missing
+        if not agent_manager.user_requirements.business_name:
+            logger.warning("⚠️ No business name stored yet")
+            return "I need a bit more information first. What is the name of your business?"
+
+        # Check if business type is missing
+        if not agent_manager.user_requirements.business_type:
+            logger.warning("⚠️ No business type stored yet")
+            return "What type of business would you like to create an agent for?"
+    
 
         logger.info(f"📊 Current requirements: Business={agent_manager.user_requirements.business_name}, Type={agent_manager.user_requirements.business_type}")
         logger.info(f"🎯 Functions: {agent_manager.user_requirements.main_functions}")
