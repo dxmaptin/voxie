@@ -1,6 +1,6 @@
 from dotenv import load_dotenv
 from enum import Enum
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional, Any
 import json
 import asyncio
@@ -12,6 +12,7 @@ from livekit.agents import AgentSession, Agent, RoomInputOptions
 from livekit.agents.llm import function_tool
 from livekit.plugins import openai, noise_cancellation
 from knowledge_base_tools import KnowledgeBaseTools
+from agent_persistence import AgentPersistence
 
 load_dotenv(".env.local")
 logger = logging.getLogger("multi-agent")
@@ -66,6 +67,7 @@ class AgentManager:
         self.room = None
         self.demo_completed = False  # Track if demo has been completed
         self.context = None  # Store the job context
+        self.current_agent_id = None  # Track saved agent ID for reproducibility
         
     async def transition_to_processing(self):
         """Start background processing of requirements"""
@@ -108,6 +110,34 @@ class AgentManager:
             # Get the result
             self.processed_spec = await processing_task
             logger.info(f"✅ Processing complete! Created spec: {self.processed_spec.agent_type}")
+
+            # 🔖 SAVE AGENT CONFIGURATION TO DATABASE FOR REPRODUCIBILITY
+            try:
+                # Convert dataclasses to dicts for storage
+                user_req_dict = asdict(self.user_requirements)
+                processed_spec_dict = asdict(self.processed_spec)
+
+                # Get session and room info
+                session_id = str(id(self.current_session)) if self.current_session else None
+                room_id = self.room.name if self.room else None
+
+                # Save to Supabase
+                agent_id = AgentPersistence.save_agent_config(
+                    user_requirements=user_req_dict,
+                    processed_spec=processed_spec_dict,
+                    session_id=session_id,
+                    room_id=room_id
+                )
+
+                if agent_id:
+                    self.current_agent_id = agent_id
+                    logger.info(f"🔖 Agent saved to database with ID: {agent_id}")
+                    logger.info(f"   This agent can now be reproduced!")
+                else:
+                    logger.warning("⚠️ Could not save agent to database")
+            except Exception as save_error:
+                logger.error(f"❌ Error saving agent to database: {save_error}")
+                # Continue anyway - this is not critical for agent functionality
 
         except Exception as e:
             logger.error(f"❌ Processing failed: {e}")
