@@ -213,6 +213,138 @@ class AgentManager:
             await self.current_session.generate_reply(
                 instructions=f"Fantastic! Your {self.processed_spec.agent_type} is now ready to test! I've configured it with all the features you requested, including access to our comprehensive knowledge base. Would you like to try it out right now? Just say 'yes' or 'let's test it' and I'll connect you to your new agent!"
             )
+
+    async def activate_preconfigured_agent(self, agent_code: str) -> str:
+        """Load and hand off to a preconfigured agent identified by a shortcut code"""
+        normalized_code = "".join(ch for ch in (agent_code or "") if ch.isdigit())
+        logger.info(f"⚡ Shortcut activation requested for code: {normalized_code or agent_code}")
+
+        if not normalized_code:
+            logger.warning("⚠️ No valid digits found in provided agent code")
+            return "I couldn't recognize that agent code. Could you double-check it for me?"
+
+        if normalized_code != "121234":
+            logger.warning(f"⚠️ Unknown agent shortcut requested: {normalized_code}")
+            return "I don't have a saved agent with that code yet. Please verify the number and try again."
+
+        if self.state == AgentState.DEMO_ACTIVE:
+            logger.info("ℹ️ Demo already active - shortcut ignored")
+            return "You're already testing an agent right now. Let me know when you'd like to switch."
+
+        greeting = "Hello! I'm Charlie, a representative of the Kensington Car Dealership team. How may I assist you today?"
+
+        preconfigured_requirements = UserRequirements(
+            business_type="Car Dealership",
+            business_name="Kensington Car Dealership",
+            target_audience="Prospective car buyers and service customers",
+            main_functions=[
+                "Schedule test drives and service appointments",
+                "Answer vehicle availability and feature questions",
+                "Guide customers through financing and purchasing steps"
+            ],
+            tone="Warm, friendly with a touch of humor",
+            special_requirements=[
+                "Agent name: Charlie",
+                f"Opening greeting: {greeting}",
+                "Keep the tone warm, friendly, and lightly humorous"
+            ]
+        )
+
+        logger.info("🪄 Applying preconfigured requirements for Kensington Car Dealership")
+        self.user_requirements = preconfigured_requirements
+
+        processing_agent = ProcessingAgent()
+        template = {
+            "voice": "echo",
+            "tone": preconfigured_requirements.tone,
+            "functions": ["general_inquiry", "business_hours"],
+            "sample_responses": [
+                greeting,
+                "I'd love to help you set up a test drive—do you have a model in mind?",
+                "Happy to walk you through financing or trim options whenever you're ready."
+            ]
+        }
+
+        base_instructions = processing_agent._build_instructions(preconfigured_requirements, template)
+        base_instructions += (
+            "\n\nSpecial configuration for Kensington Car Dealership:\n"
+            "- Introduce yourself as Charlie, representing Kensington Car Dealership.\n"
+            f"- Start new conversations with the greeting: \"{greeting}\"\n"
+            "- Be proactive about scheduling test drives, explaining vehicle features, financing, and maintenance services.\n"
+            "- Maintain a warm, friendly tone with a touch of humor while staying professional.\n"
+            "- When unsure, offer to consult the dealership knowledge base using the available tools."
+        )
+
+        functions = processing_agent._build_functions(preconfigured_requirements, template)
+        functions.extend([
+            {
+                "name": "search_knowledge_base",
+                "description": "Search the Kensington Car Dealership knowledge base for relevant information.",
+                "parameters": ["query", "max_results"]
+            },
+            {
+                "name": "answer_detailed_question",
+                "description": "Provide a detailed answer to a customer question using the knowledge base.",
+                "parameters": ["question"]
+            },
+            {
+                "name": "get_product_specifications",
+                "description": "Retrieve detailed specifications for a specific vehicle model.",
+                "parameters": ["product_name"]
+            }
+        ])
+
+        spec = ProcessedAgentSpec(
+            agent_type="Kensington Car Dealership Agent",
+            instructions=base_instructions,
+            voice="echo",
+            functions=functions,
+            sample_responses=template["sample_responses"],
+            business_context={
+                "business_name": preconfigured_requirements.business_name,
+                "business_type": preconfigured_requirements.business_type,
+                "agent_name": "Charlie",
+                "tone": preconfigured_requirements.tone,
+                "greeting": greeting,
+                "main_functions": preconfigured_requirements.main_functions,
+                "shortcut_code": normalized_code
+            }
+        )
+
+        self.processed_spec = spec
+        self.state = AgentState.DEMO_READY
+        self.demo_completed = False
+
+        logger.info("💾 Saving preconfigured agent to persistence store")
+        try:
+            user_req_dict = asdict(self.user_requirements)
+            processed_spec_dict = asdict(self.processed_spec)
+            session_id = str(id(self.current_session)) if self.current_session else None
+            room_id = self.room.name if self.room else None
+
+            agent_id = AgentPersistence.save_agent_config(
+                user_requirements=user_req_dict,
+                processed_spec=processed_spec_dict,
+                session_id=session_id,
+                room_id=room_id
+            )
+
+            if agent_id:
+                self.current_agent_id = agent_id
+                logger.info(f"✅ Shortcut agent saved with ID: {agent_id}")
+        except Exception as save_error:
+            logger.error(f"❌ Failed to save shortcut agent: {save_error}")
+
+        if self.room:
+            logger.info("🚀 Initiating immediate handoff to demo via shortcut")
+            asyncio.create_task(self.handoff_to_demo(self.room))
+        else:
+            logger.warning("⚠️ Room context missing; cannot start demo handoff yet")
+
+        return (
+            "Loading the pre-configured Kensington Car Dealership agent for you now. "
+            "I'll connect you with Charlie so you can jump straight into the demo."
+        )
         
     async def handoff_to_demo(self, room):
         """Handoff from Voxie to Demo agent"""
@@ -705,6 +837,12 @@ OUTCOMES TO TRACK
             return "You're currently testing your demo agent. When you're done, just ask to speak with me again!"
         else:
             return "I'm here to help you create your custom agent. What type of business agent would you like to create?"
+
+    @function_tool
+    async def load_preconfigured_agent(self, agent_code: str):
+        """Skip requirement gathering and load the Kensington Car Dealership demo when the user says something like 'use agent 121234'."""
+        logger.info("🎯 LOAD_PRECONFIGURED_AGENT tool invoked")
+        return await agent_manager.activate_preconfigured_agent(agent_code)
 
     @function_tool
     async def engage_user_during_wait(self):
