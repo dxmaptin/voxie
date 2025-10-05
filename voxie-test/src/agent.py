@@ -10,9 +10,11 @@ import threading
 from livekit import agents
 from livekit.agents import AgentSession, Agent, RoomInputOptions
 from livekit.agents.llm import function_tool
-from livekit.plugins import openai, noise_cancellation
+from livekit.plugins import openai, noise_cancellation, deepgram
 from knowledge_base_tools import KnowledgeBaseTools
 from agent_persistence import AgentPersistence
+from call_analytics import CallAnalytics
+from transcription_handler import TranscriptionHandler
 
 load_dotenv(".env.local")
 logger = logging.getLogger("multi-agent")
@@ -68,7 +70,61 @@ class AgentManager:
         self.demo_completed = False  # Track if demo has been completed
         self.context = None  # Store the job context
         self.current_agent_id = None  # Track saved agent ID for reproducibility
-        
+        self.analytics: Optional[CallAnalytics] = None  # Call analytics tracking
+        self.transcription: Optional[TranscriptionHandler] = None  # Transcription handler
+
+    async def log_interaction(self, speaker: str, message: str, agent_name: str = None, function_called: str = None):
+        """Helper to log conversation turns to analytics"""
+        # Log to transcription handler (for token estimation)
+        if self.transcription and message and message.strip():
+            if speaker == 'user':
+                await self.transcription.on_user_speech(message)
+            else:  # agent
+                await self.transcription.on_agent_speech(message)
+
+        # Legacy logging (kept for function calls)
+        if self.analytics:
+            try:
+                await self.analytics.log_conversation_turn(
+                    speaker=speaker,
+                    transcript=message,
+                    agent_name=agent_name or ("Voxie" if self.state == AgentState.VOXIE_ACTIVE else self.processed_spec.agent_type if self.processed_spec else "Agent"),
+                    function_called=function_called
+                )
+            except Exception as e:
+                logger.error(f"❌ Failed to log interaction: {e}")
+
+    async def end_session_with_analytics(self, rating: Optional[int] = None):
+        """End the call session and generate analytics summary"""
+        if self.analytics:
+            try:
+                # End call
+                await self.analytics.end_call(
+                    call_status='completed',
+                    rating=rating,
+                    sentiment='positive',  # Could be enhanced with sentiment analysis
+                    issue_resolved=self.demo_completed
+                )
+
+                # Generate summary from transcription if available
+                if self.transcription:
+                    logger.info("🤖 Generating summary from transcript...")
+                    summary = await self.transcription.generate_summary_and_log()
+
+                    if summary:
+                        logger.info(f"✅ Summary: {summary.get('call_category')} - {summary.get('business_outcome')}")
+
+                        # Log stats
+                        stats = self.transcription.get_stats()
+                        logger.info(f"📊 Call stats: {stats['total_turns']} turns, {stats['estimated_total_tokens']} est. tokens")
+                    else:
+                        logger.warning("⚠️ Summary generation failed")
+                else:
+                    logger.warning("⚠️ No transcription available for summary")
+
+            except Exception as e:
+                logger.error(f"❌ Failed to end session with analytics: {e}")
+
     async def transition_to_processing(self):
         """Start background processing of requirements"""
         logger.info("🔄 Starting transition to processing state")
@@ -451,6 +507,14 @@ OUTCOMES TO TRACK
     async def store_user_requirement(self, requirement_type: str, value: str):
         logger.info(f"📝 Storing requirement: {requirement_type} = {value}")
 
+        # Log user interaction to transcription (for token estimation)
+        user_message = f"User provided {requirement_type}: {value}"
+        await agent_manager.log_interaction(
+            speaker="user",
+            message=user_message,
+            function_called="store_user_requirement"
+        )
+
         normalized_type = VoxieAgent.normalize_req_type(requirement_type)
 
         match normalized_type:
@@ -609,7 +673,10 @@ OUTCOMES TO TRACK
         """Close the session gracefully"""
         logger.info("Voxie closing session at user request")
         agent_manager.state = AgentState.COMPLETED
-        
+
+        # End analytics session
+        await agent_manager.end_session_with_analytics(rating=9)  # Could ask user for rating
+
         if agent_manager.processed_spec:
             business_name = agent_manager.processed_spec.business_context.get("business_name", "your business")
             return f"Thank you for using Voxie to create your custom voice AI agent for {business_name}! Your agent specifications have been saved and you can come back anytime to test or make changes. Have a wonderful day!"
@@ -1069,18 +1136,44 @@ class DemoAgentCreator:
 async def entrypoint(ctx: agents.JobContext):
     """Main entry point - starts with Voxie agent"""
     logger.info("Starting multi-agent system with Voxie")
-    
+
     # Store room and context reference for handoffs
     agent_manager.room = ctx.room
     agent_manager.context = ctx
-    
+
+    # Initialize analytics tracking
+    import uuid
+    # Make session_id unique by appending UUID (room name alone can be reused)
+    session_id = f"{ctx.room.name}_{uuid.uuid4().hex[:8]}"
+    agent_manager.analytics = CallAnalytics(
+        session_id=session_id,
+        agent_id=agent_manager.current_agent_id,  # Will be set later when agent is saved
+        customer_phone=None  # Extract from metadata if available
+    )
+
+    # Start call tracking
+    await agent_manager.analytics.start_call(
+        room_name=ctx.room.name,
+        primary_agent_type="voxie"
+    )
+    logger.info(f"📊 Analytics started for session: {session_id}")
+
+    # Initialize transcription handler
+    agent_manager.transcription = TranscriptionHandler(analytics=agent_manager.analytics)
+    logger.info("🎙️ Transcription handler initialized")
+
+    # Add initial greeting to transcript (for testing)
+    await agent_manager.transcription.on_agent_speech(
+        "Hello! I'm Voxie, your AI assistant helping you create custom voice AI agents for your business. What type of business would you like to create an agent for?"
+    )
+
     # Start with Voxie agent
     session = AgentSession(
         llm=openai.realtime.RealtimeModel(voice="marin")  # Voxie's voice
     )
-    
+
     agent_manager.current_session = session
-    
+
     await session.start(
         room=ctx.room,
         agent=VoxieAgent(),
