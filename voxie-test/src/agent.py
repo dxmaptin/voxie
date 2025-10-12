@@ -102,7 +102,7 @@ class AgentManager:
                 await self.analytics.end_call(
                     call_status='completed',
                     rating=rating,
-                    sentiment='positive',  # Could be enhanced with sentiment analysis
+                    sentiment='positive',
                     issue_resolved=self.demo_completed
                 )
 
@@ -117,6 +117,23 @@ class AgentManager:
                         # Log stats
                         stats = self.transcription.get_stats()
                         logger.info(f"📊 Call stats: {stats['total_turns']} turns, {stats['estimated_total_tokens']} est. tokens")
+                        
+                        # 🆕 SAVE TO CALL_RECORDS TABLE
+                        logger.info("💾 Saving complete transcript to call_records...")
+                        record_id = await self.transcription.save_to_call_records(
+                            room_id=self.room.name if self.room else "unknown",
+                            session_id=self.analytics.session_id,
+                            call_session_id=self.analytics.call_session_id,
+                            agent_name=self.processed_spec.agent_type if self.processed_spec else "Voxie",
+                            customer_phone=self.analytics.customer_phone,
+                            sentiment=summary.get('sentiment'),
+                            summary=summary.get('summary')
+                        )
+                        
+                        if record_id:
+                            logger.info(f"✅ Call record saved: {record_id}")
+                        else:
+                            logger.warning("⚠️ Failed to save call record")
                     else:
                         logger.warning("⚠️ Summary generation failed")
                 else:
@@ -463,7 +480,6 @@ class AgentManager:
             self.state = AgentState.VOXIE_ACTIVE
             self.current_session = voxie_session
 
-
 # Global agent manager
 agent_manager = AgentManager()
 
@@ -699,55 +715,6 @@ OUTCOMES TO TRACK
         logger.info(f"   🎯 Functions: {agent_manager.user_requirements.main_functions}")
 
         return f"Stored {requirement_type}: {value}"
-
-
-    # async def store_user_requirement(self, requirement_type: str, value: str):
-    #     """Store a user requirement during the conversation"""
-    #     logger.info(f"📝 Storing requirement: {requirement_type} = {value}")
-
-    #     # Handle various requirement types that Voxie might use
-    #     req_type_lower = requirement_type.lower()
-
-    #     if "business_name" in req_type_lower or "name" in req_type_lower:
-    #         agent_manager.user_requirements.business_name = value
-    #         logger.info(f"✅ Set business name: {value}")
-    #     elif "business_type" in req_type_lower or "industry" in req_type_lower or "business_industry" in req_type_lower:
-    #         agent_manager.user_requirements.business_type = value
-    #         logger.info(f"✅ Set business type: {value}")
-    #     elif "cuisine" in req_type_lower:
-    #         agent_manager.user_requirements.business_type = f"{value} Restaurant"
-    #         logger.info(f"✅ Set cuisine type: {value} Restaurant")
-    #     elif "function" in req_type_lower or "agent_function" in req_type_lower:
-    #         agent_manager.user_requirements.main_functions.extend(value.split(", "))
-    #         logger.info(f"✅ Added functions: {value}")
-    #     elif "tone" in req_type_lower or "personality" in req_type_lower or "agent_tone" in req_type_lower:
-    #         agent_manager.user_requirements.tone = value
-    #         logger.info(f"✅ Set tone: {value}")
-    #     elif "audience" in req_type_lower or "target" in req_type_lower:
-    #         agent_manager.user_requirements.target_audience = value
-    #         logger.info(f"✅ Set audience: {value}")
-    #     elif "hours" in req_type_lower or "operating" in req_type_lower:
-    #         agent_manager.user_requirements.special_requirements.append(f"Operating hours: {value}")
-    #         logger.info(f"✅ Added hours: {value}")
-    #     elif "special" in req_type_lower or "requirement" in req_type_lower:
-    #         agent_manager.user_requirements.special_requirements.append(value)
-    #         logger.info(f"✅ Added special requirement: {value}")
-    #     elif "contact" in req_type_lower:
-    #         contact_type = req_type_lower.replace("contact_", "")
-    #         agent_manager.user_requirements.contact_info[contact_type] = value
-    #         logger.info(f"✅ Added contact info: {contact_type} = {value}")
-    #     else:
-    #         # Generic storage for any other requirement types
-    #         agent_manager.user_requirements.special_requirements.append(f"{requirement_type}: {value}")
-    #         logger.info(f"✅ Added generic requirement: {requirement_type} = {value}")
-
-    #     # Log current state of all requirements
-    #     logger.info(f"📊 Current requirements summary:")
-    #     logger.info(f"   🏢 Business: {agent_manager.user_requirements.business_name}")
-    #     logger.info(f"   🏷️ Type: {agent_manager.user_requirements.business_type}")
-    #     logger.info(f"   🎯 Functions: {agent_manager.user_requirements.main_functions}")
-
-    #     return f"Stored {requirement_type}: {value}"
 
     @function_tool
     async def finalize_requirements(self):
