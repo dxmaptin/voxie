@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/dxma/Desktop/voxie-clean/database/**)",
+      "Read(//Users/dxma/Desktop/voxie-clean/**)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

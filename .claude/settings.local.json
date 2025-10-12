@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv pip install:*)",
+      "Bash(.venv/bin/pip install supabase requests)",
+      "WebFetch(domain:docs.vapi.ai)",
+      "Bash(uv run:*)",
+      "Bash(timeout:*)",
+      "Bash(uv pip list:*)",
+      "WebFetch(domain:docs.livekit.io)",
+      "Bash(python3 src/call_analytics.py)",
+      "Bash(.venv/bin/python:*)",
+      "WebFetch(domain:developers.facebook.com)",
+      "WebFetch(domain:www.twilio.com)",
+      "WebFetch(domain:telnyx.com)",
+      "Bash(chmod:*)",
+      "Bash(curl:*)",
+      "Bash(python:*)",
+      "Bash(open:*)",
+      "Bash(pkill:*)",
+      "WebSearch",
+      "Read(//private/tmp/**)",
+      "Bash(python3:*)",
+      "Bash(kill:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

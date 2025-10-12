@@ -177,7 +177,7 @@ class AnalyticsDashboard:
             print("   No recent calls\n")
             return
 
-        for call in result.data:
+        for idx, call in enumerate(result.data, 1):
             agent_name = call.get('agents', {}).get('name', 'Unknown') if call.get('agents') else 'Unknown'
             status_emoji = {
                 'completed': '✅',
@@ -186,14 +186,181 @@ class AnalyticsDashboard:
                 'abandoned': '⚠️'
             }.get(call['call_status'], '❓')
 
-            print(f"{status_emoji} {call['started_at'][:19]}")
-            print(f"   Agent: {agent_name}")
-            print(f"   Status: {call['call_status']}")
+            print(f"[{idx}] {status_emoji} {call['started_at'][:19]}")
+            print(f"    Agent: {agent_name}")
+            print(f"    Status: {call['call_status']}")
             if call.get('duration_seconds'):
-                print(f"   Duration: {call['duration_seconds']}s")
+                print(f"    Duration: {call['duration_seconds']}s")
             if call.get('call_rating'):
-                print(f"   Rating: {call['call_rating']}/10")
+                print(f"    Rating: {call['call_rating']}/10")
             print()
+
+        return result.data
+
+    @staticmethod
+    async def view_call_details(call_id: str):
+        """View detailed information about a specific call"""
+        print("\n" + "="*80)
+        print(" 📋 CALL DETAILS")
+        print("="*80 + "\n")
+
+        # Get call session
+        result = supabase_client.client.table('call_sessions')\
+            .select('*')\
+            .eq('id', call_id)\
+            .execute()
+
+        if not result.data:
+            print("❌ Call not found\n")
+            return None
+
+        call = result.data[0]
+
+        # Basic info
+        print(f"📞 Session ID: {call['session_id']}")
+        print(f"🏢 Room: {call.get('room_name', 'N/A')}")
+        print(f"📅 Started: {call['started_at']}")
+        if call.get('ended_at'):
+            print(f"🏁 Ended: {call['ended_at']}")
+        print(f"⏱️  Duration: {call.get('duration_seconds', 0)}s")
+        print(f"📊 Status: {call['call_status']}")
+        if call.get('call_rating'):
+            print(f"⭐ Rating: {call['call_rating']}/10")
+        if call.get('customer_sentiment'):
+            print(f"😊 Sentiment: {call['customer_sentiment']}")
+        if call.get('customer_phone'):
+            print(f"📱 Customer: {call['customer_phone']}")
+
+        # Token usage
+        tokens = supabase_client.client.table('token_usage')\
+            .select('*')\
+            .eq('call_session_id', call_id)\
+            .execute()
+
+        if tokens.data:
+            total_cost = sum(t['total_cost_usd'] for t in tokens.data)
+            total_tokens = sum(t['total_tokens'] for t in tokens.data)
+            print(f"\n💰 Cost: ${total_cost:.4f}")
+            print(f"🔢 Tokens: {total_tokens:,}")
+
+        # Transcript
+        if call.get('full_transcript'):
+            lines = call['full_transcript'].split('\n')
+            print(f"\n📝 Transcript ({len(lines)} lines):")
+            print("─" * 80)
+            # Show first 10 lines
+            for line in lines[:10]:
+                print(f"   {line}")
+            if len(lines) > 10:
+                print(f"   ... ({len(lines) - 10} more lines)")
+
+        # Recording
+        if call.get('recording_url'):
+            print(f"\n🎙️  Recording: {call['recording_url']}")
+
+        print()
+        return call
+
+    @staticmethod
+    async def edit_call(call_id: str):
+        """Edit call metadata"""
+        print("\n" + "="*80)
+        print(" ✏️  EDIT CALL")
+        print("="*80 + "\n")
+
+        # First show current details
+        call = await AnalyticsDashboard.view_call_details(call_id)
+        if not call:
+            return
+
+        print("What would you like to update?")
+        print("1. Rating (1-10)")
+        print("2. Status (completed/failed/abandoned)")
+        print("3. Customer Sentiment (positive/neutral/negative)")
+        print("4. Add Recording URL")
+        print("5. Add/Edit Transcript")
+        print("6. Add Notes")
+        print("0. Back")
+        print()
+
+        choice = input("Select option: ").strip()
+
+        update_data = {}
+
+        if choice == '1':
+            rating = input("Enter rating (1-10): ").strip()
+            try:
+                rating_int = int(rating)
+                if 1 <= rating_int <= 10:
+                    update_data['call_rating'] = rating_int
+                    reason = input("Rating reason (optional): ").strip()
+                    if reason:
+                        update_data['call_rating_reason'] = reason
+                else:
+                    print("❌ Invalid rating")
+                    return
+            except ValueError:
+                print("❌ Invalid rating")
+                return
+
+        elif choice == '2':
+            print("Status options: completed, failed, abandoned")
+            status = input("Enter status: ").strip()
+            if status in ['completed', 'failed', 'abandoned']:
+                update_data['call_status'] = status
+            else:
+                print("❌ Invalid status")
+                return
+
+        elif choice == '3':
+            print("Sentiment options: positive, neutral, negative, mixed")
+            sentiment = input("Enter sentiment: ").strip()
+            if sentiment in ['positive', 'neutral', 'negative', 'mixed']:
+                update_data['customer_sentiment'] = sentiment
+            else:
+                print("❌ Invalid sentiment")
+                return
+
+        elif choice == '4':
+            url = input("Enter recording URL: ").strip()
+            if url:
+                update_data['recording_url'] = url
+
+        elif choice == '5':
+            print("Enter transcript (type 'END' on a new line when done):")
+            lines = []
+            while True:
+                line = input()
+                if line.strip() == 'END':
+                    break
+                lines.append(line)
+            transcript = '\n'.join(lines)
+            if transcript:
+                update_data['full_transcript'] = transcript
+
+        elif choice == '6':
+            notes = input("Enter notes: ").strip()
+            if notes:
+                # Assuming you have a notes column, otherwise skip
+                update_data['call_rating_reason'] = notes
+
+        elif choice == '0':
+            return
+
+        else:
+            print("❌ Invalid option")
+            return
+
+        # Update in Supabase
+        if update_data:
+            try:
+                supabase_client.client.table('call_sessions')\
+                    .update(update_data)\
+                    .eq('id', call_id)\
+                    .execute()
+                print("\n✅ Call updated successfully!\n")
+            except Exception as e:
+                print(f"\n❌ Failed to update: {e}\n")
 
     @staticmethod
     async def show_cost_breakdown():
@@ -259,7 +426,8 @@ async def main_menu():
         print("3. Recent Calls")
         print("4. Expensive Calls")
         print("5. Cost Breakdown")
-        print("6. Refresh All")
+        print("6. View/Edit Call Details")
+        print("7. Refresh All")
         print("0. Exit")
         print()
 
@@ -276,6 +444,24 @@ async def main_menu():
         elif choice == '5':
             await AnalyticsDashboard.show_cost_breakdown()
         elif choice == '6':
+            # Show recent calls first
+            calls = await AnalyticsDashboard.show_recent_calls(limit=20)
+            if calls:
+                call_num = input("\nEnter call number to view/edit (or 0 to cancel): ").strip()
+                try:
+                    call_idx = int(call_num) - 1
+                    if 0 <= call_idx < len(calls):
+                        call_id = calls[call_idx]['id']
+                        await AnalyticsDashboard.view_call_details(call_id)
+
+                        edit = input("\nEdit this call? (y/n): ").strip().lower()
+                        if edit == 'y':
+                            await AnalyticsDashboard.edit_call(call_id)
+                    elif call_num != '0':
+                        print("❌ Invalid call number")
+                except ValueError:
+                    print("❌ Invalid input")
+        elif choice == '7':
             await AnalyticsDashboard.show_overview()
             await AnalyticsDashboard.show_agent_performance()
             await AnalyticsDashboard.show_recent_calls()

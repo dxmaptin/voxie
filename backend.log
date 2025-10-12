@@ -1,0 +1,80 @@
+INFO:     Will watch for changes in these directories: ['/Users/dxma/Desktop/voxie-clean']
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [99452] using WatchFiles
+INFO:     Started server process [99488]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     127.0.0.1:51532 - "GET / HTTP/1.1" 200 OK
+2025-10-12 15:43:51,670 - INFO - 2 changes detected
+2025-10-12 15:51:51,083 - INFO - 3 changes detected
+2025-10-12 16:07:37,963 - INFO - 1 change detected
+2025-10-12 16:07:43,749 - INFO - 1 change detected
+2025-10-12 16:08:02,111 - INFO - 1 change detected
+2025-10-12 16:08:29,250 - INFO - 1 change detected
+2025-10-12 16:08:35,104 - INFO - 1 change detected
+2025-10-12 16:09:27,206 - INFO - 1 change detected
+2025-10-12 16:27:48,836 - INFO - 3 changes detected
+2025-10-12 21:16:34,411 - INFO - 2 changes detected
+2025-10-12 21:19:44,718 - INFO - 3 changes detected
+2025-10-12 21:43:31,524 - INFO - 2 changes detected
+2025-10-12 22:11:56,031 - INFO - 3 changes detected
+WARNING:  WatchFiles detected changes in 'voxie-test/src/agent.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [99488]
+INFO:     Started server process [47780]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+2025-10-12 22:14:18,192 - INFO - 3 changes detected
+WARNING:  WatchFiles detected changes in 'voxie-test/src/agent.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [47780]
+INFO:     Started server process [49659]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+2025-10-12 22:24:07,081 - INFO - 3 changes detected
+2025-10-12 23:31:05,270 - INFO - 3 changes detected
+2025-10-12 23:36:37,154 - INFO - 3 changes detected
+2025-10-12 23:38:39,463 - INFO - 1 change detected
+2025-10-12 23:48:31,385 - INFO - 3 changes detected
+WARNING:  WatchFiles detected changes in 'backend_server.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [49659]
+INFO:     Started server process [16711]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+2025-10-12 23:48:32,195 - INFO - 3 changes detected
+2025-10-12 23:48:53,665 - INFO - 3 changes detected
+WARNING:  WatchFiles detected changes in 'backend_server.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [16711]
+INFO:     Started server process [17012]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+2025-10-12 23:48:54,299 - INFO - 3 changes detected
+2025-10-12 23:49:07,538 - INFO - 3 changes detected
+WARNING:  WatchFiles detected changes in 'backend_server.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [17012]
+INFO:     Started server process [17183]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+2025-10-12 23:49:08,023 - INFO - 3 changes detected
+2025-10-12 23:49:20,820 - INFO - 3 changes detected
+2025-10-12 23:49:32,681 - INFO - 3 changes detected
+2025-10-12 23:49:45,789 - INFO - 3 changes detected
+2025-10-12 23:50:01,599 - INFO - 3 changes detected
+INFO:     127.0.0.1:60958 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60958 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+2025-10-13 00:02:27,281 - INFO - 3 changes detected
+✅ Supabase connected: https://gkfuepzqdzixejspfrlg.supabase.co
+INFO:     127.0.0.1:61639 - "GET /api/agents HTTP/1.1" 200 OK

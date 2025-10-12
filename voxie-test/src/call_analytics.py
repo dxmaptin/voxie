@@ -14,8 +14,19 @@ from openai import AsyncOpenAI
 
 logger = logging.getLogger("call-analytics")
 
-# Initialize OpenAI client for summary generation
-openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# OpenAI client (lazy-loaded when needed)
+openai_client = None
+
+def get_openai_client():
+    """Lazy-load OpenAI client only when needed"""
+    global openai_client
+    if openai_client is None:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            logger.warning("⚠️ OPENAI_API_KEY not set, summary generation will be disabled")
+            return None
+        openai_client = AsyncOpenAI(api_key=api_key)
+    return openai_client
 
 
 @dataclass
@@ -390,7 +401,12 @@ Please provide a JSON response with the following structure:
 
 Only respond with valid JSON, no other text."""
 
-            response = await openai_client.chat.completions.create(
+            client = get_openai_client()
+            if not client:
+                logger.warning("⚠️ OpenAI client not available, skipping summary generation")
+                return None
+
+            response = await client.chat.completions.create(
                 model="gpt-4o",
                 messages=[
                     {"role": "system", "content": "You are a call analytics assistant. Analyze call transcripts and provide structured summaries in JSON format."},

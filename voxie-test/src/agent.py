@@ -6,15 +6,28 @@ import json
 import asyncio
 import logging
 import threading
+import os
+import sys
+
+# Add parent directory to path for backend logging
+sys.path.append('/Users/dxma/Desktop/voxie-clean')
 
 from livekit import agents
 from livekit.agents import AgentSession, Agent, RoomInputOptions
 from livekit.agents.llm import function_tool
-from livekit.plugins import openai, noise_cancellation, deepgram
+from livekit.plugins import openai, noise_cancellation
 from knowledge_base_tools import KnowledgeBaseTools
 from agent_persistence import AgentPersistence
 from call_analytics import CallAnalytics
 from transcription_handler import TranscriptionHandler
+
+# Import backend logging handler (optional - only if backend is enabled)
+try:
+    from backend_log_handler import BackendLogHandler
+    BACKEND_LOGGING_AVAILABLE = True
+except ImportError:
+    BACKEND_LOGGING_AVAILABLE = False
+    logger.warning("⚠️ Backend logging not available - install backend dependencies to enable")
 
 load_dotenv(".env.local")
 logger = logging.getLogger("multi-agent")
@@ -1272,7 +1285,17 @@ class DemoAgentCreator:
 
 
 async def entrypoint(ctx: agents.JobContext):
-    """Main entry point - starts with Voxie agent"""
+    """Main entry point - starts with Voxie agent OR specific agent if AGENT_ID is set"""
+
+    # Check if a specific agent should be loaded from the database
+    agent_id = os.getenv("AGENT_ID")
+
+    if agent_id:
+        logger.info(f"🎯 Loading specific agent from database: {agent_id}")
+        await start_specific_agent(ctx, agent_id)
+        return
+
+    # Otherwise, start with Voxie (the agent creation flow)
     logger.info("Starting multi-agent system with Voxie")
 
     # Store room and context reference for handoffs
@@ -1283,6 +1306,29 @@ async def entrypoint(ctx: agents.JobContext):
     import uuid
     # Make session_id unique by appending UUID (room name alone can be reused)
     session_id = f"{ctx.room.name}_{uuid.uuid4().hex[:8]}"
+
+    # ✨ Setup Backend Logging (Auto-stream ALL logs to frontend)
+    if BACKEND_LOGGING_AVAILABLE and os.getenv("ENABLE_BACKEND_LOGGING", "false").lower() == "true":
+        backend_url = os.getenv("BACKEND_URL", "http://localhost:8000")
+
+        try:
+            # Create backend logging handler
+            backend_handler = BackendLogHandler(
+                session_id=session_id,
+                backend_url=backend_url
+            )
+            backend_handler.setFormatter(logging.Formatter('%(message)s'))
+
+            # Add handler to all relevant loggers
+            logging.getLogger("multi-agent").addHandler(backend_handler)
+            logging.getLogger("call-analytics").addHandler(backend_handler)
+            logging.getLogger("transcription").addHandler(backend_handler)
+
+            logger.info(f"✅ Backend logging enabled for session: {session_id}")
+            logger.info(f"🌐 Frontend can connect to: {backend_url}/api/agents/create-stream/{session_id}")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to setup backend logging: {e}")
+
     agent_manager.analytics = CallAnalytics(
         session_id=session_id,
         agent_id=agent_manager.current_agent_id,  # Will be set later when agent is saved
@@ -1324,6 +1370,238 @@ async def entrypoint(ctx: agents.JobContext):
         instructions="Greet the user warmly as Voxie in English and explain that you help create custom voice AI agents for their business. Ask them what type of business they want to create an agent for."
     )
 
+    # Set up room disconnect handler to auto-generate summaries
+    @ctx.room.on("disconnected")
+    async def on_room_disconnected():
+        """Handle room disconnect - auto-generate summary for calls >3 minutes"""
+        logger.info("🔌 Room disconnected - checking if summary should be generated...")
+
+        if agent_manager.analytics and agent_manager.transcription:
+            try:
+                # Check call duration
+                call_start = agent_manager.analytics.call_session_id
+                if call_start:
+                    # Fetch call session to check duration
+                    import sys
+                    sys.path.append('./function_call')
+                    from supabase_client import supabase_client
+                    from datetime import datetime, timezone
+
+                    result = supabase_client.client.table('call_sessions').select('started_at').eq('id', call_start).execute()
+
+                    if result.data and len(result.data) > 0:
+                        started_at_str = result.data[0]['started_at']
+                        started_at = datetime.fromisoformat(started_at_str.replace('Z', '+00:00'))
+                        now = datetime.now(timezone.utc)
+                        duration_seconds = (now - started_at).total_seconds()
+
+                        logger.info(f"⏱️ Call duration: {duration_seconds:.0f} seconds")
+
+                        # Only generate summary if call was longer than 3 minutes (180 seconds)
+                        if duration_seconds >= 180:
+                            logger.info("✅ Call duration >= 3 minutes, generating summary...")
+
+                            # Mark call as completed
+                            await agent_manager.analytics.end_call(
+                                call_status='completed',
+                                sentiment='neutral'
+                            )
+
+                            # Generate summary
+                            summary = await agent_manager.transcription.generate_summary_and_log()
+
+                            if summary:
+                                logger.info(f"✅ Auto-generated summary: {summary.get('call_category')} - {summary.get('business_outcome')}")
+                            else:
+                                logger.warning("⚠️ Summary generation failed")
+                        else:
+                            logger.info(f"⏭️ Call too short ({duration_seconds:.0f}s < 180s), skipping summary")
+                            # Still mark as completed
+                            await agent_manager.analytics.end_call(call_status='completed')
+
+            except Exception as e:
+                logger.error(f"❌ Error in disconnect handler: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+
+
+async def start_specific_agent(ctx: agents.JobContext, agent_id: str):
+    """Start a specific agent loaded from the database"""
+    logger.info(f"📥 Loading agent configuration from database: {agent_id}")
+
+    # Store room and context
+    agent_manager.room = ctx.room
+    agent_manager.context = ctx
+
+    try:
+        # Load agent from database
+        agent_data = AgentPersistence.load_agent_config(agent_id)
+
+        if not agent_data:
+            logger.error(f"❌ Agent not found in database: {agent_id}")
+            logger.info("⚠️ Falling back to Voxie agent")
+            # Fall back to Voxie - but clear AGENT_ID to prevent infinite loop
+            os.environ.pop("AGENT_ID", None)
+            await entrypoint(ctx)
+            return
+
+        logger.info(f"✅ Loaded agent from database")
+
+        # Extract data from the loaded agent structure
+        user_req_dict = agent_data.get('user_requirements', {})
+        processed_spec_dict = agent_data.get('processed_spec', {})
+
+        logger.info(f"📋 Agent type: {processed_spec_dict.get('agent_type')}")
+        logger.info(f"🎵 Voice: {processed_spec_dict.get('voice')}")
+        logger.info(f"🏢 Business: {user_req_dict.get('business_name')}")
+
+        # Convert dicts back to dataclass objects
+        agent_manager.user_requirements = UserRequirements(
+            business_type=user_req_dict.get('business_type'),
+            business_name=user_req_dict.get('business_name'),
+            target_audience=user_req_dict.get('target_audience'),
+            main_functions=user_req_dict.get('main_functions', []),
+            tone=user_req_dict.get('tone'),
+            special_requirements=user_req_dict.get('special_requirements', []),
+            contact_info=user_req_dict.get('contact_info', {})
+        )
+
+        agent_manager.processed_spec = ProcessedAgentSpec(
+            agent_type=processed_spec_dict.get('agent_type', 'Custom Agent'),
+            instructions=processed_spec_dict.get('instructions', ''),
+            voice=processed_spec_dict.get('voice', 'alloy'),
+            functions=processed_spec_dict.get('functions', []),
+            sample_responses=processed_spec_dict.get('sample_responses', []),
+            business_context=processed_spec_dict.get('business_context', {})
+        )
+
+        agent_manager.current_agent_id = agent_id
+        agent_manager.state = AgentState.DEMO_ACTIVE
+
+        # Initialize analytics
+        import uuid
+        session_id = f"{ctx.room.name}_{uuid.uuid4().hex[:8]}"
+
+        agent_manager.analytics = CallAnalytics(
+            session_id=session_id,
+            agent_id=agent_id,
+            customer_phone=None
+        )
+
+        await agent_manager.analytics.start_call(
+            room_name=ctx.room.name,
+            primary_agent_type=agent_manager.processed_spec.agent_type
+        )
+        logger.info(f"📊 Analytics started for session: {session_id}")
+
+        # Initialize transcription handler
+        agent_manager.transcription = TranscriptionHandler(analytics=agent_manager.analytics)
+        logger.info("🎙️ Transcription handler initialized")
+
+        # Create the demo agent
+        logger.info(f"🏗️ Creating demo agent: {agent_manager.processed_spec.agent_type}")
+        demo_agent = DemoAgentCreator.create_agent(agent_manager.processed_spec)
+        logger.info(f"✅ Demo agent created successfully")
+
+        # Start session with the demo agent
+        logger.info(f"🎵 Starting session with voice: {agent_manager.processed_spec.voice}")
+        session = AgentSession(
+            llm=openai.realtime.RealtimeModel(voice=agent_manager.processed_spec.voice)
+        )
+
+        agent_manager.current_session = session
+
+        logger.info("🚀 Starting agent session...")
+        await session.start(
+            room=ctx.room,
+            agent=demo_agent,
+            room_input_options=RoomInputOptions(
+                noise_cancellation=noise_cancellation.BVC(),
+            ),
+        )
+        logger.info("✅ Session started")
+
+        # Get the greeting from the agent configuration
+        business_name = agent_manager.processed_spec.business_context.get("business_name", "our business")
+        greeting = agent_manager.processed_spec.business_context.get("greeting")
+
+        if greeting:
+            logger.info(f"💬 Using custom greeting: {greeting[:50]}...")
+            await session.generate_reply(instructions=f"Say this exact greeting: {greeting}")
+        else:
+            logger.info(f"💬 Using default greeting")
+            await session.generate_reply(
+                instructions=f"Greet the user warmly as the {agent_manager.processed_spec.agent_type} for {business_name}. Introduce yourself and ask how you can help them today."
+            )
+
+        logger.info(f"🎉 {agent_manager.processed_spec.agent_type} is now active in room {ctx.room.name}")
+
+        # Set up room disconnect handler to auto-generate summaries
+        @ctx.room.on("disconnected")
+        async def on_room_disconnected():
+            """Handle room disconnect - auto-generate summary for calls >3 minutes"""
+            logger.info("🔌 Room disconnected - checking if summary should be generated...")
+
+            if agent_manager.analytics and agent_manager.transcription:
+                try:
+                    # Check call duration
+                    call_start = agent_manager.analytics.call_session_id
+                    if call_start:
+                        # Fetch call session to check duration
+                        import sys
+                        sys.path.append('./function_call')
+                        from supabase_client import supabase_client
+                        from datetime import datetime, timezone
+
+                        result = supabase_client.client.table('call_sessions').select('started_at').eq('id', call_start).execute()
+
+                        if result.data and len(result.data) > 0:
+                            started_at_str = result.data[0]['started_at']
+                            started_at = datetime.fromisoformat(started_at_str.replace('Z', '+00:00'))
+                            now = datetime.now(timezone.utc)
+                            duration_seconds = (now - started_at).total_seconds()
+
+                            logger.info(f"⏱️ Call duration: {duration_seconds:.0f} seconds")
+
+                            # Only generate summary if call was longer than 3 minutes (180 seconds)
+                            if duration_seconds >= 180:
+                                logger.info("✅ Call duration >= 3 minutes, generating summary...")
+
+                                # Mark call as completed
+                                await agent_manager.analytics.end_call(
+                                    call_status='completed',
+                                    sentiment='neutral'
+                                )
+
+                                # Generate summary
+                                summary = await agent_manager.transcription.generate_summary_and_log()
+
+                                if summary:
+                                    logger.info(f"✅ Auto-generated summary: {summary.get('call_category')} - {summary.get('business_outcome')}")
+                                else:
+                                    logger.warning("⚠️ Summary generation failed")
+                            else:
+                                logger.info(f"⏭️ Call too short ({duration_seconds:.0f}s < 180s), skipping summary")
+                                # Still mark as completed
+                                await agent_manager.analytics.end_call(call_status='completed')
+
+                except Exception as e:
+                    logger.error(f"❌ Error in disconnect handler: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+
+    except Exception as e:
+        logger.error(f"❌ Failed to start specific agent: {e}")
+        logger.error(f"Error details: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise
+
 
 if __name__ == "__main__":
-    agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=entrypoint))
+    # CRITICAL: Set num_idle_processes=0 to prevent multiple workers from spawning
+    # This ensures ONLY ONE agent joins each room
+    agents.cli.run_app(agents.WorkerOptions(
+        entrypoint_fnc=entrypoint,
+        num_idle_processes=0  # Don't pre-spawn idle worker processes
+    ))
