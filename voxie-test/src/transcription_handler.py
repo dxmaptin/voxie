@@ -283,3 +283,75 @@ Only respond with valid JSON, no other text."""
             'estimated_total_tokens': self.total_input_tokens_estimate + self.total_output_tokens_estimate,
             'call_duration_seconds': time.time() - self.call_start_time
         }
+    
+    async def save_to_call_records(
+        self,
+        room_id: str,
+        session_id: str,
+        call_session_id: Optional[str] = None,
+        agent_name: Optional[str] = None,
+        start_time: Optional[float] = None,
+        **kwargs
+    ) -> Optional[str]:
+        """
+        Save full transcript to call_records table
+        
+        Args:
+            room_id: LiveKit room ID
+            session_id: LiveKit session ID
+            call_session_id: Link to call_sessions table
+            agent_name: Name of agent used
+            start_time: Call start timestamp (uses self.call_start_time if not provided)
+            **kwargs: Additional fields (customer_phone, sentiment, etc.)
+            
+        Returns:
+            Record ID or None
+        """
+        if len(self.full_transcript) == 0:
+            logger.warning("⚠️ No transcript to save")
+            return None
+        
+        try:
+            from call_records_manager import CallRecordsManager
+            from datetime import datetime, timezone
+            
+            # Convert transcript to dict format
+            transcript_turns = [
+                {
+                    "speaker": turn.speaker,
+                    "text": turn.text,
+                    "timestamp": turn.timestamp,
+                    "confidence": turn.confidence
+                }
+                for turn in self.full_transcript
+            ]
+            
+            # Calculate times
+            call_start = datetime.fromtimestamp(
+                start_time if start_time else self.call_start_time,
+                tz=timezone.utc
+            )
+            call_end = datetime.now(timezone.utc)
+            
+            # Create manager and save
+            manager = CallRecordsManager()
+            record_id = await manager.create_call_record(
+                room_id=room_id,
+                session_id=session_id,
+                transcript_data=transcript_turns,
+                start_time=call_start,
+                end_time=call_end,
+                call_session_id=call_session_id,
+                agent_name=agent_name,
+                token_usage=self.total_input_tokens_estimate + self.total_output_tokens_estimate,
+                **kwargs
+            )
+            
+            if record_id:
+                logger.info(f"✅ Transcript saved to call_records: {record_id}")
+            
+            return record_id
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to save transcript to call_records: {e}")
+            return None
