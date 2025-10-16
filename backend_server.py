@@ -19,9 +19,18 @@ from pydantic import BaseModel
 import uvicorn
 
 from fastapi.staticfiles import StaticFiles
-# Load environment variables from .env.local
+# Load environment variables from .env.local (local) or .env (cloud)
 from dotenv import load_dotenv
-load_dotenv('.env.local')
+
+# Try .env.local first (local development), then .env (cloud deployment)
+if os.path.exists('.env.local'):
+    load_dotenv('.env.local')
+    print("✅ Loaded environment from .env.local")
+elif os.path.exists('.env'):
+    load_dotenv('.env')
+    print("✅ Loaded environment from .env")
+else:
+    print("⚠️ No .env file found, using system environment variables")
 
 # Setup logger
 logger = logging.getLogger("voxie-backend")

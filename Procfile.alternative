@@ -1,0 +1,14 @@
+# Alternative Procfile options for Railway deployment
+# Use ONE of these in your Procfile
+
+# Option 1: Using uvicorn command (recommended, already in Procfile)
+web: uvicorn backend_server:app --host 0.0.0.0 --port $PORT
+
+# Option 2: Using python -m uvicorn (alternative if Option 1 doesn't work)
+web: python -m uvicorn backend_server:app --host 0.0.0.0 --port $PORT
+
+# Option 3: Using python directly (backend_server.py has __main__)
+web: python backend_server.py
+
+# Railway will set $PORT automatically
+# The current Procfile uses Option 1, which is the standard approach

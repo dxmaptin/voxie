@@ -6,7 +6,14 @@ import os
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
-load_dotenv(".env.local")
+# Try .env.local first (local development), then .env (cloud deployment)
+if os.path.exists('.env.local'):
+    load_dotenv('.env.local')
+elif os.path.exists('.env'):
+    load_dotenv('.env')
+else:
+    # Use system environment variables (Railway, etc.)
+    pass
 
 class SupabaseClient:
     def __init__(self):
