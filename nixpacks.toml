@@ -1,0 +1,14 @@
+# Nixpacks configuration for Railway
+# Explicitly defines this as a Python project
+
+[phases.setup]
+nixPkgs = ["python311", "python311Packages.pip"]
+
+[phases.install]
+cmds = ["pip install -r requirements.txt"]
+
+[phases.build]
+cmds = ["echo 'Build complete'"]
+
+[start]
+cmd = "uvicorn backend_server:app --host 0.0.0.0 --port $PORT"
