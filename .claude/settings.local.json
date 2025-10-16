@@ -21,7 +21,10 @@
       "WebSearch",
       "Read(//private/tmp/**)",
       "Bash(python3:*)",
-      "Bash(kill:*)"
+      "Bash(kill:*)",
+      "Bash(railway logs:*)",
+      "Bash(railway status:*)",
+      "Bash(railway service:*)"
     ],
     "deny": [],
     "ask": []
