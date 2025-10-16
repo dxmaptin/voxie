@@ -11,9 +11,10 @@ python-dotenv==1.0.1
 supabase==2.9.0
 
 # LiveKit for voice agents (simplified - no extras that cause build issues)
-livekit==0.17.4
-livekit-api==0.6.2
-livekit-agents==1.2.7
+# Using latest compatible versions
+livekit>=0.17.0
+livekit-api>=1.0.0
+livekit-agents>=1.2.0
 
 # OpenAI Integration
 openai>=1.0.0
