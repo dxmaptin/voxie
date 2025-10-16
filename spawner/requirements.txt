@@ -1,0 +1,19 @@
+# LiveKit Agent Spawner Dependencies
+
+# Core LiveKit
+livekit==0.17.4
+livekit-agents==0.10.4
+livekit-plugins-openai==0.8.3
+livekit-plugins-noise-cancellation==0.1.0
+
+# OpenAI
+openai==1.54.4
+
+# Database
+supabase==2.9.0
+
+# Environment & Configuration
+python-dotenv==1.0.1
+
+# Utilities
+aiohttp==3.10.10
