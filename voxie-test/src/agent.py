@@ -10,7 +10,9 @@ import os
 import sys
 
 # Add parent directory to path for backend logging
-sys.path.append('/Users/dxma/Desktop/voxie-clean')
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
 
 from livekit import agents
 from livekit.agents import AgentSession, Agent, RoomInputOptions
@@ -22,15 +24,16 @@ from call_analytics import CallAnalytics
 from transcription_handler import TranscriptionHandler
 
 # Import backend logging handler (optional - only if backend is enabled)
+logger = logging.getLogger("multi-agent")
 try:
     from backend_log_handler import BackendLogHandler
     BACKEND_LOGGING_AVAILABLE = True
+    logger.warning("⚠️ Backend logging available")
 except ImportError:
     BACKEND_LOGGING_AVAILABLE = False
     logger.warning("⚠️ Backend logging not available - install backend dependencies to enable")
 
 load_dotenv(".env.local")
-logger = logging.getLogger("multi-agent")
 
 REQUIREMENT_TYPE_MAP = {
     "business_name": ["business_name", "name", "company_name"],

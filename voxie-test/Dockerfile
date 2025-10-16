@@ -58,12 +58,7 @@ RUN chown -R appuser:appuser /app
 # This improves security by not running as root
 USER appuser
 
-# Pre-download any ML models or files the agent needs
-# This ensures the container is ready to run immediately without downloading
-# dependencies at runtime, which improves startup time and reliability
-RUN uv run src/agent.py download-files
-
 # Run the application using UV
 # UV will activate the virtual environment and run the agent.
-# The "start" command tells the worker to connect to LiveKit and begin waiting for jobs.
-CMD ["uv", "run", "src/agent.py", "start"]
+# The "start" command tells the worker to connect to LiveKit and wait for rooms (auto-dispatch)
+CMD ["uv", "run", "python", "src/agent.py", "start"]

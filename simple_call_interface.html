@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Call Interface - Voxie</title>
+
+    <!-- LiveKit Client SDK -->
+    <!-- <script src="https://unpkg.com/livekit-client@2.5.9/dist/livekit-client.umd.js"></script> --> <!-- older version -->
+    <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.15.10/dist/livekit-client.umd.min.js"></script> <!-- newer version -->
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .container {
+            max-width: 600px;
+            width: 100%;
+        }
+
+        .card {
+            background: white;
+            border-radius: 16px;
+            padding: 32px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            color: #333;
+            margin-bottom: 8px;
+        }
+
+        .header p {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .form-group {
+            margin-bottom: 24px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+            font-size: 14px;
+        }
+
+        .form-group select {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 16px;
+            background: white;
+            cursor: pointer;
+            transition: border-color 0.2s;
+        }
+
+        .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .form-group select:disabled {
+            background: #f5f5f5;
+            cursor: not-allowed;
+        }
+
+        .status {
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .status.idle {
+            background: #e3f2fd;
+            color: #1976d2;
+            display: block;
+        }
+
+        .status.connecting {
+            background: #fff3cd;
+            color: #856404;
+            display: block;
+        }
+
+        .status.connected {
+            background: #d4edda;
+            color: #155724;
+            display: block;
+        }
+
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            display: block;
+        }
+
+        .status-icon {
+            display: inline-block;
+            margin-right: 8px;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 14px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: 12px;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn-danger:hover:not(:disabled) {
+            background: #c82333;
+        }
+
+        .transcript-container {
+            margin-top: 24px;
+            display: none;
+        }
+
+        .transcript-container.active {
+            display: block;
+        }
+
+        .transcript-header {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 12px;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .transcript {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 16px;
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #e2e8f0;
+        }
+
+        .transcript-message {
+            margin-bottom: 12px;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .transcript-message.user {
+            background: #e3f2fd;
+            color: #1565c0;
+            margin-left: 20px;
+        }
+
+        .transcript-message.agent {
+            background: #f3e5f5;
+            color: #6a1b9a;
+            margin-right: 20px;
+        }
+
+        .transcript-message .speaker {
+            font-weight: 600;
+            margin-bottom: 4px;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .transcript-message .text {
+            word-wrap: break-word;
+        }
+
+        .transcript-empty {
+            text-align: center;
+            color: #999;
+            padding: 20px;
+            font-style: italic;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(0, 0, 0, 0.1);
+            border-radius: 50%;
+            border-top-color: #667eea;
+            animation: spin 0.8s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .audio-visualization {
+            display: none;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            height: 40px;
+            margin: 16px 0;
+        }
+
+        .audio-visualization.active {
+            display: flex;
+        }
+
+        .audio-bar {
+            width: 4px;
+            height: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 2px;
+            animation: audioWave 0.8s ease-in-out infinite;
+        }
+
+        .audio-bar:nth-child(2) {
+            animation-delay: 0.1s;
+        }
+
+        .audio-bar:nth-child(3) {
+            animation-delay: 0.2s;
+        }
+
+        .audio-bar:nth-child(4) {
+            animation-delay: 0.3s;
+        }
+
+        .audio-bar:nth-child(5) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes audioWave {
+            0%, 100% {
+                height: 20px;
+            }
+            50% {
+                height: 35px;
+            }
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 24px;
+            color: white;
+            font-size: 12px;
+            opacity: 0.8;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <div class="header">
+                <h1>Voice Call Interface</h1>
+                <p>Connect with your AI agent</p>
+            </div>
+
+            <!-- Agent Selection -->
+            <div class="form-group">
+                <label for="agentSelect">Select Agent</label>
+                <select id="agentSelect">
+                    <option value="">Loading agents...</option>
+                </select>
+            </div>
+
+            <!-- Status Display -->
+            <div id="statusDisplay" class="status idle">
+                <span class="status-icon">ℹ️</span>
+                <span id="statusText">Select an agent and click Start Call</span>
+            </div>
+
+            <!-- Audio Visualization -->
+            <div id="audioVisualization" class="audio-visualization">
+                <div class="audio-bar"></div>
+                <div class="audio-bar"></div>
+                <div class="audio-bar"></div>
+                <div class="audio-bar"></div>
+                <div class="audio-bar"></div>
+            </div>
+
+            <!-- Call Controls -->
+            <button id="startCallBtn" class="btn btn-primary" onclick="startCall()">
+                Start Call
+            </button>
+            <button id="endCallBtn" class="btn btn-danger" onclick="endCall()" style="display: none;">
+                End Call
+            </button>
+
+            <!-- Transcript Display -->
+            <div id="transcriptContainer" class="transcript-container">
+                <div class="transcript-header">Live Transcript</div>
+                <div id="transcript" class="transcript">
+                    <div class="transcript-empty">Transcript will appear here once the call starts...</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            Powered by Voxie &amp; LiveKit
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+
+        // State
+        let agents = [];
+        let currentRoom = null;
+        let currentRoomName = null;
+        let currentAgentId = null;
+        let transcriptMessages = [];
+
+        // Load agents on page load
+        document.addEventListener('DOMContentLoaded', async () => {
+            await loadAgents();
+        });
+
+        async function loadAgents() {
+            try {
+                const response = await fetch(`${API_BASE}/api/agents`);
+                const data = await response.json();
+
+                if (data.status === 'success' && data.agents && data.agents.length > 0) {
+                    agents = data.agents.filter(a => a.id !== '');
+
+                    const select = document.getElementById('agentSelect');
+                    select.innerHTML = agents.length > 0
+                        ? '<option value="">Select an agent...</option>' +
+                          agents.map(a => `<option value="${a.id}">${a.name}</option>`).join('')
+                        : '<option value="">No active agents available</option>';
+
+                    select.disabled = agents.length === 0;
+                } else {
+                    throw new Error('No agents found');
+                }
+            } catch (error) {
+                console.error('Failed to load agents:', error);
+                updateStatus('error', `Failed to load agents: ${error.message}`);
+            }
+        }
+
+        async function startCall() {
+            const agentSelect = document.getElementById('agentSelect');
+            currentAgentId = agentSelect.value;
+
+            if (!currentAgentId) {
+                updateStatus('error', 'Please select an agent first');
+                return;
+            }
+
+            const startBtn = document.getElementById('startCallBtn');
+            const endBtn = document.getElementById('endCallBtn');
+
+            try {
+                // Disable UI
+                startBtn.disabled = true;
+                agentSelect.disabled = true;
+                updateStatus('connecting', 'Starting call...');
+
+                // Call backend to start the call
+                const response = await fetch(`${API_BASE}/api/call/start`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        agent_id: currentAgentId
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Failed to start call: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                console.log('Call started:', data);
+
+                currentRoomName = data.room_name;
+
+                // Connect to LiveKit room
+                updateStatus('connecting', `Connecting to ${data.agent_name}...`);
+                await connectToRoom(data.livekit_url, data.token, data.room_name);
+
+                // Update UI
+                startBtn.style.display = 'none';
+                endBtn.style.display = 'block';
+                document.getElementById('transcriptContainer').classList.add('active');
+                document.getElementById('audioVisualization').classList.add('active');
+
+                updateStatus('connected', `Connected to ${data.agent_name}. Start speaking!`);
+
+            } catch (error) {
+                console.error('Failed to start call:', error);
+                updateStatus('error', `Failed to start call: ${error.message}`);
+                startBtn.disabled = false;
+                agentSelect.disabled = false;
+            }
+        }
+
+        async function connectToRoom(livekitUrl, token, roomName) {
+            try {
+                // Create LiveKit room instance
+                currentRoom = new LivekitClient.Room({
+                    adaptiveStream: true,
+                    dynacast: true,
+                });
+
+                // Set up event listeners
+                currentRoom.on(LivekitClient.RoomEvent.TrackSubscribed, handleTrackSubscribed);
+                currentRoom.on(LivekitClient.RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
+                currentRoom.on(LivekitClient.RoomEvent.Disconnected, handleDisconnected);
+                currentRoom.on(LivekitClient.RoomEvent.ParticipantConnected, (participant) => {
+                    console.log('Participant connected:', participant.identity);
+                });
+
+                
+                // Connect to room
+                await currentRoom.connect(livekitUrl, token);
+                console.log('Connected to room:', roomName);
+
+                // Get local user identity for speaker detection
+                const localIdentity = currentRoom.localParticipant.identity;
+                
+                // NEW: Register text stream handler for real-time transcripts
+                currentRoom.registerTextStreamHandler('lk.transcription', async (reader, participantInfo) => {
+                    try {
+                        const message = await reader.readAll();
+                        console.log('Transcript received:', { message, participant: participantInfo.identity, local: localIdentity });
+                    
+                        // Confirm it's a transcription
+                        const attributes = reader.info.attributes || {};
+                        if (!attributes['lk.transcribed_track_id']) {
+                            console.log('Non-transcription message skipped');
+                            return;
+                        }
+
+                        // Determine speaker based on transcribed participant's identity
+                        let speaker = participantInfo.identity === localIdentity ? 'user' : 'agent';
+                    
+                        // Only add final transcripts to UI (skip interim for simplicity)
+                        const isFinal = attributes['lk.transcription_final'] === 'true';
+                        if (isFinal && message.trim()) {
+                            addTranscriptMessage(speaker, message);
+                        }
+                    } catch (error) {
+                        console.error('Failed to handle transcript stream:', error);
+                    }
+                });
+
+                // Enable local audio
+                await currentRoom.localParticipant.setMicrophoneEnabled(true);
+                console.log('Microphone enabled');
+
+            } catch (error) {
+                console.error('Failed to connect to room:', error);
+                throw error;
+            }
+        }
+
+        function handleTrackSubscribed(track, publication, participant) {
+            console.log('Track subscribed:', track.kind, 'from', participant.identity);
+
+            if (track.kind === LivekitClient.Track.Kind.Audio) {
+                // Attach audio track to play agent's voice
+                const audioElement = track.attach();
+                audioElement.play();
+                document.body.appendChild(audioElement);
+                console.log('Agent audio track attached and playing');
+            }
+        }
+
+        function handleTrackUnsubscribed(track, publication, participant) {
+            console.log('Track unsubscribed:', track.kind);
+            track.detach();
+        }
+
+        function handleDisconnected() {
+            console.log('Disconnected from room');
+            updateStatus('idle', 'Call ended. Select an agent to start a new call.');
+            resetUI();
+        }
+
+        function addTranscriptMessage(speaker, text) {
+            if (!text || !text.trim()) return;
+
+            const transcript = document.getElementById('transcript');
+
+            // Remove empty state message if present
+            const emptyMsg = transcript.querySelector('.transcript-empty');
+            if (emptyMsg) {
+                emptyMsg.remove();
+            }
+
+            // Add new message
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `transcript-message ${speaker.toLowerCase()}`;
+            messageDiv.innerHTML = `
+                <div class="speaker">${speaker}</div>
+                <div class="text">${text}</div>
+            `;
+
+            transcript.appendChild(messageDiv);
+            transcript.scrollTop = transcript.scrollHeight;
+
+            transcriptMessages.push({ speaker, text, timestamp: new Date() });
+        }
+
+        async function endCall() {
+            const endBtn = document.getElementById('endCallBtn');
+            endBtn.disabled = true;
+
+            try {
+                updateStatus('connecting', 'Ending call...');
+
+                // Disconnect from room
+                if (currentRoom) {
+                    await currentRoom.disconnect();
+                    currentRoom = null;
+                }
+
+                // Notify backend
+                if (currentRoomName) {
+                    await fetch(`${API_BASE}/api/call/end`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            room_name: currentRoomName
+                        })
+                    });
+                }
+
+                updateStatus('idle', 'Call ended successfully. Select an agent to start a new call.');
+                resetUI();
+
+            } catch (error) {
+                console.error('Failed to end call:', error);
+                updateStatus('error', `Failed to end call: ${error.message}`);
+                resetUI();
+            }
+        }
+
+        function resetUI() {
+            document.getElementById('startCallBtn').style.display = 'block';
+            document.getElementById('startCallBtn').disabled = false;
+            document.getElementById('endCallBtn').style.display = 'none';
+            document.getElementById('endCallBtn').disabled = false;
+            document.getElementById('agentSelect').disabled = false;
+            document.getElementById('audioVisualization').classList.remove('active');
+
+            currentRoomName = null;
+            currentAgentId = null;
+        }
+
+        function updateStatus(type, message) {
+            const statusDisplay = document.getElementById('statusDisplay');
+            const statusText = document.getElementById('statusText');
+
+            // Remove all status classes
+            statusDisplay.className = 'status';
+
+            // Add new status class
+            statusDisplay.classList.add(type);
+
+            // Update icon
+            const icons = {
+                idle: 'ℹ️',
+                connecting: '🔄',
+                connected: '✅',
+                error: '❌'
+            };
+
+            const icon = statusDisplay.querySelector('.status-icon');
+            icon.textContent = icons[type] || 'ℹ️';
+
+            // Update text
+            statusText.textContent = message;
+        }
+
+        // Handle page unload
+        window.addEventListener('beforeunload', () => {
+            if (currentRoom) {
+                currentRoom.disconnect();
+            }
+        });
+    </script>
+</body>
+</html>

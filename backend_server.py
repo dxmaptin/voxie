@@ -18,9 +18,13 @@ from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 import uvicorn
 
+from fastapi.staticfiles import StaticFiles
 # Load environment variables from .env.local
 from dotenv import load_dotenv
 load_dotenv('.env.local')
+
+# Setup logger
+logger = logging.getLogger("voxie-backend")
 
 # Event bus for broadcasting agent creation events
 class EventBus:
@@ -414,14 +418,177 @@ async def get_recent_calls(limit: int = 10):
         raise HTTPException(status_code=500, detail=f"Failed to get recent calls: {str(e)}")
 
 
+# ============= CALL API ENDPOINTS (Exercise 2) =============
+
+class CallStartRequest(BaseModel):
+    agent_id: str
+    customer_phone: Optional[str] = None
+
+class CallStartResponse(BaseModel):
+    status: str
+    room_name: str
+    token: str
+    livekit_url: str
+    agent_name: str
+
+class CallEndRequest(BaseModel):
+    room_name: str
+    session_id: Optional[str] = None
+
+@app.post("/api/call/start", response_model=CallStartResponse)
+async def start_call(request: CallStartRequest):
+    """
+    Start a new call session with a specific agent
+    - Creates a LiveKit room
+    - Generates a client access token
+    - Starts the agent process in the background
+    - Returns connection details for the browser client
+    """
+    try:
+        import sys
+        sys.path.append('./function_call')
+        from supabase_client import supabase_client
+        from livekit import api
+
+        # Get agent from database
+        agent_response = supabase_client.client.table('agents').select('*').eq('id', request.agent_id).execute()
+
+        if not agent_response.data or len(agent_response.data) == 0:
+            raise HTTPException(status_code=404, detail=f"Agent not found: {request.agent_id}")
+
+        agent = agent_response.data[0]
+
+        # Generate unique room name
+        room_name = f"call_{request.agent_id[:8]}_{uuid.uuid4().hex[:8]}"
+
+        # Get LiveKit configuration
+        livekit_url = os.getenv("LIVEKIT_URL")
+        livekit_api_key = os.getenv("LIVEKIT_API_KEY")
+        livekit_api_secret = os.getenv("LIVEKIT_API_SECRET")
+
+        if not all([livekit_url, livekit_api_key, livekit_api_secret]):
+            raise HTTPException(status_code=500, detail="LiveKit configuration missing in environment")
+
+        # Generate client access token
+        token = api.AccessToken(livekit_api_key, livekit_api_secret)
+        token.with_identity(f"user_{uuid.uuid4().hex[:8]}")
+        token.with_name("Browser Client")
+        token.with_grants(api.VideoGrants(
+            room_join=True,
+            room=room_name,
+            can_publish=True,
+            can_subscribe=True,
+            can_publish_data=True
+        ))
+
+        client_token = token.to_jwt()
+
+        # Start agent process in background
+        # The agent will connect to the room and start listening
+        logger.info(f"🚀 Starting agent {request.agent_id} for room {room_name}")
+
+        # Launch agent process using simple_agent.py in production mode
+        import subprocess
+
+        env = os.environ.copy()
+        env['AGENT_ID'] = request.agent_id
+        env['ROOM_NAME'] = room_name
+
+        # Start agent process in background (non-blocking)
+        subprocess.Popen(
+            ['python3', 'simple_agent.py'],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True  # Detach from parent process
+        )
+
+        logger.info(f"✅ Agent process started for room: {room_name}")
+
+        # Log to Supabase (optional - for tracking)
+        try:
+            session_id = str(uuid.uuid4())
+            supabase_client.client.table('call_sessions').insert({
+                'session_id': session_id,  # Generated UUID to satisfy not-null constraint
+                'room_name': room_name,
+                'agent_id': request.agent_id,
+                'customer_phone': request.customer_phone or None,
+                'call_status': 'initiated',
+                'started_at': datetime.now(timezone.utc).isoformat()
+            }).execute()
+        except Exception as log_error:
+            logger.warning(f"Failed to log call session: {log_error}")
+
+        return CallStartResponse(
+            status="success",
+            room_name=room_name,
+            token=client_token,
+            livekit_url=livekit_url,
+            agent_name=agent.get('name', 'Agent')
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to start call: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Failed to start call: {str(e)}")
+
+
+@app.post("/api/call/end")
+async def end_call(request: CallEndRequest):
+    """
+    End a call session
+    - Marks the call as completed in the database
+    - The agent process will automatically exit when the room becomes empty
+    """
+    try:
+        import sys
+        sys.path.append('./function_call')
+        from supabase_client import supabase_client
+
+        # Update call session status
+        try:
+            supabase_client.client.table('call_sessions')\
+                .update({
+                    'call_status': 'completed',
+                    'ended_at': datetime.now(timezone.utc).isoformat()
+                })\
+                .eq('room_name', request.room_name)\
+                .execute()
+
+            logger.info(f"✅ Call ended for room: {request.room_name}")
+        except Exception as log_error:
+            logger.warning(f"Failed to update call session: {log_error}")
+
+        return {
+            "status": "success",
+            "message": "Call ended successfully",
+            "room_name": request.room_name
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to end call: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to end call: {str(e)}")
+
+
 @app.get("/dashboard")
 async def serve_dashboard():
     """
     Serve the dashboard HTML
     """
-    return FileResponse("dashboard.html")
+    return FileResponse("agent_dashboard.html")
 
 
+@app.get("/call")
+async def serve_call_interface():
+    """
+    Serve the simple call interface HTML (Exercise 2)
+    """
+    return FileResponse("simple_call_interface.html")
+
+app.mount("/static", StaticFiles(directory="."), name="static")
 if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,

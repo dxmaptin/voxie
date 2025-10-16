@@ -24,9 +24,10 @@ coverage/
 .tmp
 .cache
 
-# Environment variables
+# Environment variables (local files only, not .env.example)
 .env
-.env.*
+.env.local
+.env.*.local
 
 # VCS, editor, OS
 .git
