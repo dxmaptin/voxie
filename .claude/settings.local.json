@@ -24,7 +24,9 @@
       "Bash(kill:*)",
       "Bash(railway logs:*)",
       "Bash(railway status:*)",
-      "Bash(railway service:*)"
+      "Bash(railway service:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ],
     "deny": [],
     "ask": []
