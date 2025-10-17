@@ -221,14 +221,7 @@ async def list_all_agents():
     """
     try:
         import sys
-        import os
         sys.path.append('./function_call')
-
-        # Debug: Print environment variables
-        logger.info(f"🔍 SUPABASE_URL exists: {bool(os.getenv('SUPABASE_URL'))}")
-        logger.info(f"🔍 SUPABASE_ANON_KEY exists: {bool(os.getenv('SUPABASE_ANON_KEY'))}")
-        logger.info(f"🔍 SUPABASE_ANON_KEY length: {len(os.getenv('SUPABASE_ANON_KEY', ''))}")
-
         from supabase_client import supabase_client
 
         response = supabase_client.client.table('agents').select('*').order('created_at', desc=True).execute()
@@ -239,10 +232,6 @@ async def list_all_agents():
             "agents": response.data or []
         }
     except Exception as e:
-        logger.error(f"❌ Error in /api/agents: {str(e)}")
-        logger.error(f"   Exception type: {type(e).__name__}")
-        import traceback
-        logger.error(f"   Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Error fetching agents: {str(e)}")
 
 @app.get("/api/agents/{agent_id}")
