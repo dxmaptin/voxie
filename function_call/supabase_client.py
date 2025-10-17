@@ -20,8 +20,8 @@ else:
 class SupabaseClient:
     def __init__(self):
         # Get environment variables (works both locally and on Railway)
-        self.url = os.getenv("SUPABASE_URL")
-        self.key = os.getenv("SUPABASE_ANON_KEY")
+        self.url = os.getenv("SUPABASE_URL", "").strip()
+        self.key = os.getenv("SUPABASE_ANON_KEY", "").strip()
 
         if not self.url or not self.key:
             # Print diagnostic info
@@ -30,6 +30,11 @@ class SupabaseClient:
             print(f"❌ Available env vars: {sorted([k for k in os.environ.keys() if 'SUPABASE' in k or 'LIVEKIT' in k])}")
             raise ValueError("SUPABASE_URL and SUPABASE_ANON_KEY must be set in environment")
 
+        # Debug: Check for whitespace/newlines
+        print(f"🔍 URL has whitespace: {self.url != self.url.strip()}")
+        print(f"🔍 Key has whitespace: {self.key != self.key.strip()}")
+        print(f"🔍 Key length after strip: {len(self.key)}")
+
         try:
             self.client: Client = create_client(self.url, self.key)
             print(f"✅ Supabase connected: {self.url}")
@@ -37,6 +42,8 @@ class SupabaseClient:
             print(f"❌ Failed to create Supabase client: {str(e)}")
             print(f"   URL: {self.url}")
             print(f"   Key length: {len(self.key) if self.key else 0}")
+            print(f"   Key first 20 chars: {self.key[:20] if self.key else 'N/A'}")
+            print(f"   Key last 20 chars: {self.key[-20:] if self.key else 'N/A'}")
             raise
 
 # Create singleton instance
