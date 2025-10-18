@@ -26,15 +26,26 @@ from dotenv import load_dotenv
 # Try .env.local first (local development), then .env (cloud deployment)
 if os.path.exists('.env.local'):
     load_dotenv('.env.local')
-    print("✅ Loaded environment from .env.local")
+    print("✅ Loaded environment from .env.local", flush=True)
 elif os.path.exists('.env'):
     load_dotenv('.env')
-    print("✅ Loaded environment from .env")
+    print("✅ Loaded environment from .env", flush=True)
 else:
-    print("⚠️ No .env file found, using system environment variables")
+    print("⚠️ No .env file found, using system environment variables", flush=True)
 
-# Setup logger
+# Setup logger with explicit stdout handler for Railway visibility
+import sys
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(levelname)s:%(name)s:%(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)  # Explicitly use stdout
+    ],
+    force=True  # Override any existing configuration
+)
 logger = logging.getLogger("voxie-backend")
+logger.setLevel(logging.INFO)
+logger.info("🚀 Backend logger initialized - output to stdout")
 
 # Event bus for broadcasting agent creation events
 class EventBus:
