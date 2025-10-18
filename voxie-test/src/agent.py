@@ -8,6 +8,8 @@ import logging
 import threading
 import os
 import sys
+import signal
+import atexit
 
 # Add parent directory to path for backend logging
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
@@ -1568,7 +1570,69 @@ async def start_specific_agent(ctx: agents.JobContext, agent_id: str):
         raise
 
 
+# Global cleanup function
+async def cleanup_agent():
+    """Cleanup function to gracefully terminate the agent"""
+    try:
+        logger.info("🛑 Received termination signal")
+        logger.info("🧹 Cleaning up agent session...")
+
+        # Close current session if active
+        if agent_manager.current_session:
+            try:
+                await agent_manager.current_session.aclose()
+                logger.info("✅ Agent session closed")
+            except Exception as e:
+                logger.error(f"⚠️ Error closing session: {e}")
+
+        # Disconnect from room if connected
+        if agent_manager.room:
+            try:
+                await agent_manager.room.disconnect()
+                logger.info("✅ Room disconnected")
+            except Exception as e:
+                logger.error(f"⚠️ Error disconnecting room: {e}")
+
+        # End analytics tracking if active
+        if agent_manager.analytics:
+            try:
+                await agent_manager.analytics.end_call(call_status='completed')
+                logger.info("✅ Analytics finalized")
+            except Exception as e:
+                logger.error(f"⚠️ Error finalizing analytics: {e}")
+
+        logger.info("✅ Agent terminated successfully")
+    except Exception as e:
+        logger.error(f"❌ Error during cleanup: {e}")
+
+
+def signal_handler(signum, frame):
+    """Handle SIGINT and SIGTERM signals"""
+    logger.info(f"🛑 Received signal {signum}")
+    # Run cleanup in the event loop
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(cleanup_agent())
+        else:
+            loop.run_until_complete(cleanup_agent())
+    except Exception as e:
+        logger.error(f"❌ Error running cleanup: {e}")
+    finally:
+        # Force exit
+        sys.exit(0)
+
+
 if __name__ == "__main__":
+    # Register signal handlers
+    signal.signal(signal.SIGINT, signal_handler)  # Ctrl+C
+    signal.signal(signal.SIGTERM, signal_handler)  # kill command
+
+    # Register cleanup on normal exit
+    atexit.register(lambda: logger.info("🔚 Process exiting..."))
+
+    logger.info("🔧 Signal handlers registered (Ctrl+C to exit gracefully)")
+
     # CRITICAL: Set num_idle_processes=0 to prevent multiple workers from spawning
     # This ensures ONLY ONE agent joins each room
     agents.cli.run_app(agents.WorkerOptions(

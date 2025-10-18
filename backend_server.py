@@ -503,16 +503,33 @@ async def start_call(request: CallStartRequest):
         env['AGENT_ID'] = request.agent_id
         env['ROOM_NAME'] = room_name
 
+        # Create log file for this agent instance
+        log_file_path = f"agent_logs/agent_{request.agent_id[:8]}_{room_name}.log"
+        os.makedirs("agent_logs", exist_ok=True)
+
+        # Use the voxie-test virtual environment's Python
+        voxie_test_python = os.path.join(os.path.dirname(__file__), 'voxie-test', '.venv', 'bin', 'python3')
+
         # Start agent process in background (non-blocking)
-        subprocess.Popen(
-            ['python3', 'simple_agent.py'],
+        log_file = open(log_file_path, 'w')
+        process = subprocess.Popen(
+            [voxie_test_python, 'simple_agent.py'],
             env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,  # Redirect stderr to stdout
             start_new_session=True  # Detach from parent process
         )
 
-        logger.info(f"✅ Agent process started for room: {room_name}")
+        logger.info(f"✅ Agent process started (PID: {process.pid}) for room: {room_name}")
+        logger.info(f"📝 Agent logs: {log_file_path}")
+
+        # Quick check if process is still running after brief delay
+        await asyncio.sleep(0.5)
+        if process.poll() is not None:
+            # Process has already exited
+            logger.error(f"❌ Agent process exited immediately with code: {process.returncode}")
+            logger.error(f"📝 Check logs at: {log_file_path}")
+            raise HTTPException(status_code=500, detail=f"Agent process failed to start. Check logs at {log_file_path}")
 
         # Log to Supabase (optional - for tracking)
         try:
@@ -522,7 +539,7 @@ async def start_call(request: CallStartRequest):
                 'room_name': room_name,
                 'agent_id': request.agent_id,
                 'customer_phone': request.customer_phone or None,
-                'call_status': 'initiated',
+                'call_status': 'active',
                 'started_at': datetime.now(timezone.utc).isoformat()
             }).execute()
         except Exception as log_error:
