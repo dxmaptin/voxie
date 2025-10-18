@@ -10,14 +10,16 @@ python-dotenv==1.0.1
 # Database & Storage
 supabase==2.9.0
 
-# LiveKit for voice agents (simplified - no extras that cause build issues)
-# Using latest compatible versions
+# LiveKit for voice agents with all required plugins
+# Using exact versions from voxie-test/pyproject.toml
 livekit>=0.17.0
 livekit-api>=1.0.0
-livekit-agents>=1.2.0
+livekit-agents[openai,turn-detector,silero,cartesia,deepgram]>=1.2.0
+livekit-plugins-noise-cancellation>=0.2.0
 
 # OpenAI Integration
 openai>=1.0.0
+tiktoken>=0.5.0
 
 # Additional tools
 requests==2.32.3
