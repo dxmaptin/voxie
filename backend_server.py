@@ -507,13 +507,23 @@ async def start_call(request: CallStartRequest):
         log_file_path = f"agent_logs/agent_{request.agent_id[:8]}_{room_name}.log"
         os.makedirs("agent_logs", exist_ok=True)
 
-        # Use the voxie-test virtual environment's Python
-        voxie_test_python = os.path.join(os.path.dirname(__file__), 'voxie-test', '.venv', 'bin', 'python3')
+        # Detect correct Python path based on environment
+        if os.path.exists('/app/.venv/bin/python3'):
+            # Railway production environment
+            python_executable = '/app/.venv/bin/python3'
+            logger.info(f"🚂 Detected Railway production environment")
+        else:
+            # Local development environment
+            voxie_test_python = os.path.join(os.path.dirname(__file__), 'voxie-test', '.venv', 'bin', 'python3')
+            python_executable = voxie_test_python
+            logger.info(f"💻 Detected local development environment")
+
+        logger.info(f"🐍 Using Python executable: {python_executable}")
 
         # Start agent process in background (non-blocking)
         log_file = open(log_file_path, 'w')
         process = subprocess.Popen(
-            [voxie_test_python, 'simple_agent.py'],
+            [python_executable, 'simple_agent.py'],
             env=env,
             stdout=log_file,
             stderr=subprocess.STDOUT,  # Redirect stderr to stdout
