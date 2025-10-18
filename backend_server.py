@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import os
+import sys
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, AsyncGenerator
@@ -444,6 +445,75 @@ class CallEndRequest(BaseModel):
     room_name: str
     session_id: Optional[str] = None
 
+def _detect_python_executable():
+    """
+    Detect the correct Python executable to use for spawning agent subprocesses.
+    Tries multiple strategies in order of preference:
+    1. Explicit AGENT_PYTHON environment variable (for CI/hosting overrides)
+    2. Railway production path (/app/.venv/bin/python3) - has all dependencies
+    3. Local development path (voxie-test/.venv/bin/python3) - agent-specific venv
+    4. Active virtualenv via VIRTUAL_ENV (fallback if neither Railway nor local venv found)
+    5. Current interpreter (sys.executable) as final fallback
+
+    NOTE: We check local voxie-test/.venv BEFORE VIRTUAL_ENV because locally the backend
+    runs in a separate venv (.venv) but the agent needs voxie-test/.venv which has
+    LiveKit dependencies. On Railway, there's only one venv (/app/.venv) with everything.
+
+    Returns the path to python3 executable that exists.
+    Raises RuntimeError if no valid executable is found.
+    """
+    candidates = []
+
+    # 1) Explicit override (useful in CI / hosting)
+    python_exec = os.environ.get("AGENT_PYTHON")
+    if python_exec:
+        candidates.append(("AGENT_PYTHON env var", python_exec))
+        if os.path.exists(python_exec):
+            logger.info(f"🎯 Using explicit AGENT_PYTHON: {python_exec}")
+            return python_exec
+
+    # 2) Railway production environment (creates /app/.venv with all dependencies)
+    candidate = "/app/.venv/bin/python3"
+    candidates.append(("Railway production", candidate))
+    if os.path.exists(candidate):
+        logger.info(f"🚂 Using Railway production Python: {candidate}")
+        return candidate
+
+    # 3) Local development environment (voxie-test/.venv with LiveKit dependencies)
+    voxie_test_python = os.path.join(os.path.dirname(__file__), 'voxie-test', '.venv', 'bin', 'python3')
+    candidates.append(("Local voxie-test venv", voxie_test_python))
+    if os.path.exists(voxie_test_python):
+        logger.info(f"💻 Using local development Python (voxie-test venv): {voxie_test_python}")
+        return voxie_test_python
+
+    # 4) If a virtualenv is active (VIRTUAL_ENV) — fallback option
+    venv = os.environ.get("VIRTUAL_ENV")
+    if venv:
+        candidate = os.path.join(venv, "bin", "python3")
+        candidates.append(("VIRTUAL_ENV", candidate))
+        if os.path.exists(candidate):
+            logger.warning(f"⚠️ Using VIRTUAL_ENV (may lack agent dependencies): {candidate}")
+            return candidate
+
+    # 5) Fallback to current interpreter
+    candidates.append(("Current interpreter (sys.executable)", sys.executable))
+    if os.path.exists(sys.executable):
+        logger.warning(f"⚠️ Using sys.executable fallback: {sys.executable}")
+        return sys.executable
+
+    # If we get here, nothing worked - log all candidates and fail
+    logger.error("❌ Failed to find a valid Python executable!")
+    logger.error("Tried the following candidates:")
+    for name, path in candidates:
+        exists = "✓" if os.path.exists(path) else "✗"
+        logger.error(f"  {exists} {name}: {path}")
+
+    raise RuntimeError(
+        f"Cannot find Python executable for agent subprocess. "
+        f"Tried: {', '.join([path for _, path in candidates])}. "
+        f"Set AGENT_PYTHON environment variable to specify explicitly."
+    )
+
 @app.post("/api/call/start", response_model=CallStartResponse)
 async def start_call(request: CallStartRequest):
     """
@@ -507,31 +577,51 @@ async def start_call(request: CallStartRequest):
         log_file_path = f"agent_logs/agent_{request.agent_id[:8]}_{room_name}.log"
         os.makedirs("agent_logs", exist_ok=True)
 
-        # Detect correct Python path based on environment
-        if os.path.exists('/app/.venv/bin/python3'):
-            # Railway production environment
-            python_executable = '/app/.venv/bin/python3'
-            logger.info(f"🚂 Detected Railway production environment")
-        else:
-            # Local development environment
-            voxie_test_python = os.path.join(os.path.dirname(__file__), 'voxie-test', '.venv', 'bin', 'python3')
-            python_executable = voxie_test_python
-            logger.info(f"💻 Detected local development environment")
+        # Detect correct Python executable using robust detection
+        try:
+            python_executable = _detect_python_executable()
+        except RuntimeError as e:
+            logger.error(f"❌ Python executable detection failed: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+        # Build absolute path to agent script to avoid working directory issues
+        agent_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'simple_agent.py')
+        if not os.path.exists(agent_script):
+            logger.error(f"❌ Agent script not found: {agent_script}")
+            raise HTTPException(status_code=500, detail=f"Agent script not found: {agent_script}")
 
         logger.info(f"🐍 Using Python executable: {python_executable}")
+        logger.info(f"📜 Using agent script: {agent_script}")
+
+        # Final guard: verify Python executable exists
+        if not os.path.exists(python_executable):
+            logger.error(f"❌ Python executable does not exist: {python_executable}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Python executable not found: {python_executable}"
+            )
 
         # Start agent process in background (non-blocking)
         log_file = open(log_file_path, 'w')
+        cmd = [python_executable, agent_script]
+
+        logger.info(f"🚀 Launching agent subprocess with command: {' '.join(cmd)}")
+
         process = subprocess.Popen(
-            [python_executable, 'simple_agent.py'],
+            cmd,
             env=env,
             stdout=log_file,
             stderr=subprocess.STDOUT,  # Redirect stderr to stdout
-            start_new_session=True  # Detach from parent process
+            start_new_session=True,  # Detach from parent process
+            cwd=os.path.dirname(os.path.abspath(__file__))  # Set working directory to script location
         )
 
-        logger.info(f"✅ Agent process started (PID: {process.pid}) for room: {room_name}")
-        logger.info(f"📝 Agent logs: {log_file_path}")
+        logger.info(f"✅ Agent subprocess started successfully")
+        logger.info(f"   PID: {process.pid}")
+        logger.info(f"   Room: {room_name}")
+        logger.info(f"   Python: {python_executable}")
+        logger.info(f"   Script: {agent_script}")
+        logger.info(f"   Logs: {log_file_path}")
 
         # Quick check if process is still running after brief delay
         await asyncio.sleep(0.5)
