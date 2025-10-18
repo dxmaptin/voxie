@@ -523,6 +523,12 @@ async def start_call(request: CallStartRequest):
     - Starts the agent process in the background
     - Returns connection details for the browser client
     """
+    logger.info("=" * 80)
+    logger.info("📞 INCOMING CALL START REQUEST")
+    logger.info("=" * 80)
+    logger.info(f"🔑 Agent ID: {request.agent_id}")
+    logger.info(f"📱 Customer phone: {request.customer_phone}")
+
     try:
         import sys
         sys.path.append('./function_call')
@@ -530,25 +536,33 @@ async def start_call(request: CallStartRequest):
         from livekit import api
 
         # Get agent from database
+        logger.info(f"🔍 Fetching agent from database: {request.agent_id}")
         agent_response = supabase_client.client.table('agents').select('*').eq('id', request.agent_id).execute()
 
         if not agent_response.data or len(agent_response.data) == 0:
+            logger.error(f"❌ Agent not found in database: {request.agent_id}")
             raise HTTPException(status_code=404, detail=f"Agent not found: {request.agent_id}")
 
         agent = agent_response.data[0]
+        logger.info(f"✅ Found agent: {agent.get('name', 'Unknown')}")
 
         # Generate unique room name
         room_name = f"call_{request.agent_id[:8]}_{uuid.uuid4().hex[:8]}"
+        logger.info(f"🏠 Generated room name: {room_name}")
 
         # Get LiveKit configuration
         livekit_url = os.getenv("LIVEKIT_URL")
         livekit_api_key = os.getenv("LIVEKIT_API_KEY")
         livekit_api_secret = os.getenv("LIVEKIT_API_SECRET")
 
+        logger.info(f"🔗 LiveKit URL: {livekit_url}")
+
         if not all([livekit_url, livekit_api_key, livekit_api_secret]):
+            logger.error("❌ LiveKit configuration incomplete")
             raise HTTPException(status_code=500, detail="LiveKit configuration missing in environment")
 
         # Generate client access token
+        logger.info("🎫 Generating client access token...")
         token = api.AccessToken(livekit_api_key, livekit_api_secret)
         token.with_identity(f"user_{uuid.uuid4().hex[:8]}")
         token.with_name("Browser Client")
@@ -573,11 +587,11 @@ async def start_call(request: CallStartRequest):
         env['AGENT_ID'] = request.agent_id
         env['ROOM_NAME'] = room_name
 
-        # Create log file for this agent instance
-        log_file_path = f"agent_logs/agent_{request.agent_id[:8]}_{room_name}.log"
-        os.makedirs("agent_logs", exist_ok=True)
-
         # Detect correct Python executable using robust detection
+        logger.info("=" * 80)
+        logger.info(f"🎬 STARTING AGENT SUBPROCESS FOR ROOM: {room_name}")
+        logger.info("=" * 80)
+
         try:
             python_executable = _detect_python_executable()
         except RuntimeError as e:
@@ -590,8 +604,11 @@ async def start_call(request: CallStartRequest):
             logger.error(f"❌ Agent script not found: {agent_script}")
             raise HTTPException(status_code=500, detail=f"Agent script not found: {agent_script}")
 
-        logger.info(f"🐍 Using Python executable: {python_executable}")
-        logger.info(f"📜 Using agent script: {agent_script}")
+        logger.info(f"🐍 Python executable: {python_executable}")
+        logger.info(f"📜 Agent script: {agent_script}")
+        logger.info(f"🔑 Agent ID: {request.agent_id}")
+        logger.info(f"🏠 Room name: {room_name}")
+        logger.info(f"📂 Working directory: {os.path.dirname(os.path.abspath(__file__))}")
 
         # Final guard: verify Python executable exists
         if not os.path.exists(python_executable):
@@ -601,37 +618,97 @@ async def start_call(request: CallStartRequest):
                 detail=f"Python executable not found: {python_executable}"
             )
 
-        # Start agent process in background (non-blocking)
-        log_file = open(log_file_path, 'w')
+        # Prepare subprocess command
         cmd = [python_executable, agent_script]
+        logger.info(f"🚀 Subprocess command: {' '.join(cmd)}")
+        logger.info(f"🌍 Environment variables set:")
+        logger.info(f"   - AGENT_ID={request.agent_id}")
+        logger.info(f"   - ROOM_NAME={room_name}")
 
-        logger.info(f"🚀 Launching agent subprocess with command: {' '.join(cmd)}")
+        # Try to create agent_logs directory for optional file logging (won't fail if can't)
+        try:
+            log_file_path = f"agent_logs/agent_{request.agent_id[:8]}_{room_name}.log"
+            os.makedirs("agent_logs", exist_ok=True)
+            log_file = open(log_file_path, 'w', buffering=1)  # Line buffered
+            logger.info(f"📝 Agent logs will also be written to: {log_file_path}")
+            # Use PIPE for stderr to capture errors even when stdout goes to file
+            subprocess_stdout = log_file
+            subprocess_stderr = subprocess.PIPE
+        except Exception as e:
+            logger.warning(f"⚠️ Could not create log file (Railway filesystem?): {e}")
+            logger.info("📝 Agent logs will only appear in Railway logs (stdout)")
+            log_file = None
+            log_file_path = None
+            # On Railway, both stdout and stderr go to Railway logs
+            subprocess_stdout = None
+            subprocess_stderr = None
 
-        process = subprocess.Popen(
-            cmd,
-            env=env,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,  # Redirect stderr to stdout
-            start_new_session=True,  # Detach from parent process
-            cwd=os.path.dirname(os.path.abspath(__file__))  # Set working directory to script location
-        )
+        logger.info("🎯 Spawning subprocess...")
 
-        logger.info(f"✅ Agent subprocess started successfully")
-        logger.info(f"   PID: {process.pid}")
-        logger.info(f"   Room: {room_name}")
-        logger.info(f"   Python: {python_executable}")
-        logger.info(f"   Script: {agent_script}")
-        logger.info(f"   Logs: {log_file_path}")
+        try:
+            process = subprocess.Popen(
+                cmd,
+                env=env,
+                stdout=subprocess_stdout,
+                stderr=subprocess_stderr,
+                start_new_session=True,  # Detach from parent process
+                cwd=os.path.dirname(os.path.abspath(__file__))  # Set working directory to script location
+            )
+            logger.info(f"✅ Subprocess spawned with PID: {process.pid}")
+        except Exception as e:
+            logger.error(f"❌ Failed to spawn subprocess: {e}")
+            if log_file:
+                log_file.close()
+            raise HTTPException(status_code=500, detail=f"Failed to spawn agent subprocess: {e}")
 
         # Quick check if process is still running after brief delay
+        logger.info("⏳ Waiting 0.5s to verify subprocess starts...")
         await asyncio.sleep(0.5)
-        if process.poll() is not None:
+
+        poll_result = process.poll()
+        if poll_result is not None:
             # Process has already exited
-            logger.error(f"❌ Agent process exited immediately with code: {process.returncode}")
-            logger.error(f"📝 Check logs at: {log_file_path}")
-            raise HTTPException(status_code=500, detail=f"Agent process failed to start. Check logs at {log_file_path}")
+            logger.error(f"❌ Agent subprocess exited immediately with return code: {poll_result}")
+
+            # Try to capture stderr if available
+            if subprocess_stderr == subprocess.PIPE:
+                try:
+                    stderr_output = process.stderr.read().decode('utf-8', errors='replace')
+                    if stderr_output:
+                        logger.error(f"📋 Subprocess stderr output:")
+                        for line in stderr_output.split('\n'):
+                            if line.strip():
+                                logger.error(f"   {line}")
+                except Exception as e:
+                    logger.error(f"⚠️ Could not read stderr: {e}")
+
+            if log_file_path:
+                logger.error(f"📝 Check log file at: {log_file_path}")
+                # Try to read first few lines of log file
+                try:
+                    with open(log_file_path, 'r') as f:
+                        log_content = f.read(500)
+                        if log_content:
+                            logger.error(f"📋 First 500 chars of log file:")
+                            logger.error(log_content)
+                except Exception as e:
+                    logger.error(f"⚠️ Could not read log file: {e}")
+
+            if log_file:
+                log_file.close()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Agent subprocess failed to start (exit code {poll_result}). Check Railway logs for details."
+            )
+
+        logger.info(f"✅ Agent subprocess running successfully (PID: {process.pid})")
+        logger.info(f"🎉 Agent will connect to room: {room_name}")
+        if log_file_path:
+            logger.info(f"📝 Subprocess logs: {log_file_path}")
+        logger.info("=" * 80)
 
         # Log to Supabase (optional - for tracking)
+        logger.info("💾 Logging call session to Supabase...")
         try:
             session_id = str(uuid.uuid4())
             supabase_client.client.table('call_sessions').insert({
@@ -642,8 +719,16 @@ async def start_call(request: CallStartRequest):
                 'call_status': 'active',
                 'started_at': datetime.now(timezone.utc).isoformat()
             }).execute()
+            logger.info(f"✅ Call session logged with ID: {session_id}")
         except Exception as log_error:
-            logger.warning(f"Failed to log call session: {log_error}")
+            logger.warning(f"⚠️ Failed to log call session: {log_error}")
+
+        logger.info("=" * 80)
+        logger.info("✅ CALL START SUCCESSFUL - Returning response to client")
+        logger.info(f"🏠 Room: {room_name}")
+        logger.info(f"👤 Agent: {agent.get('name', 'Agent')}")
+        logger.info(f"🔗 LiveKit URL: {livekit_url}")
+        logger.info("=" * 80)
 
         return CallStartResponse(
             status="success",
