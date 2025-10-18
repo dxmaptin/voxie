@@ -636,14 +636,26 @@ async def start_call(request: CallStartRequest):
             subprocess_stderr = subprocess.PIPE
         except Exception as e:
             logger.warning(f"⚠️ Could not create log file (Railway filesystem?): {e}")
-            logger.info("📝 Agent logs will only appear in Railway logs (stdout)")
+            logger.info("📝 Agent logs will appear in Railway logs (forwarded to parent stdout/stderr)")
             log_file = None
             log_file_path = None
-            # On Railway, both stdout and stderr go to Railway logs
-            subprocess_stdout = None
-            subprocess_stderr = None
+            # On Railway: explicitly forward to parent's stdout/stderr so logs appear
+            # Using sys.stdout/stderr ensures subprocess output appears in Railway logs
+            import sys
+            subprocess_stdout = sys.stdout
+            subprocess_stderr = sys.stderr
 
         logger.info("🎯 Spawning subprocess...")
+
+        # On Railway, we need subprocess output to appear in logs
+        # Don't use start_new_session on Railway - it detaches stdout completely
+        is_railway = os.path.exists('/app/.venv')
+        use_new_session = not is_railway  # Only detach locally
+
+        if is_railway:
+            logger.info("🚂 Railway environment detected - subprocess will stay attached for log visibility")
+        else:
+            logger.info("💻 Local environment - subprocess will detach")
 
         try:
             process = subprocess.Popen(
@@ -651,7 +663,7 @@ async def start_call(request: CallStartRequest):
                 env=env,
                 stdout=subprocess_stdout,
                 stderr=subprocess_stderr,
-                start_new_session=True,  # Detach from parent process
+                start_new_session=use_new_session,  # Detach only in local dev
                 cwd=os.path.dirname(os.path.abspath(__file__))  # Set working directory to script location
             )
             logger.info(f"✅ Subprocess spawned with PID: {process.pid}")

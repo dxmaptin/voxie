@@ -30,9 +30,19 @@ from agent import (
 )
 from agent_persistence import AgentPersistence
 
-load_dotenv(".env.local")
-logging.basicConfig(level=logging.INFO)
+# Try to load .env.local (local dev), fall back to .env (could exist), or use system env vars (Railway)
+if os.path.exists(".env.local"):
+    load_dotenv(".env.local")
+    print("✅ Loaded .env.local", flush=True)
+elif os.path.exists(".env"):
+    load_dotenv(".env")
+    print("✅ Loaded .env", flush=True)
+else:
+    print("⚠️ No .env file found, using system environment variables (Railway/production)", flush=True)
+
+logging.basicConfig(level=logging.INFO, format='%(levelname)s:%(name)s:%(message)s')
 logger = logging.getLogger("simple-agent")
+logger.info("🚀 Simple agent script starting...")
 
 
 async def run_specific_agent(agent_id: str, room_name: str):
