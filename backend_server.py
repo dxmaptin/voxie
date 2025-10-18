@@ -636,37 +636,41 @@ async def start_call(request: CallStartRequest):
         logger.info(f"   - AGENT_ID={request.agent_id}")
         logger.info(f"   - ROOM_NAME={room_name}")
 
-        # Try to create agent_logs directory for optional file logging (won't fail if can't)
-        try:
-            log_file_path = f"agent_logs/agent_{request.agent_id[:8]}_{room_name}.log"
-            os.makedirs("agent_logs", exist_ok=True)
-            log_file = open(log_file_path, 'w', buffering=1)  # Line buffered
-            logger.info(f"📝 Agent logs will also be written to: {log_file_path}")
-            # Use PIPE for stderr to capture errors even when stdout goes to file
-            subprocess_stdout = log_file
-            subprocess_stderr = subprocess.PIPE
-        except Exception as e:
-            logger.warning(f"⚠️ Could not create log file (Railway filesystem?): {e}")
-            logger.info("📝 Agent logs will appear in Railway logs (forwarded to parent stdout/stderr)")
-            log_file = None
-            log_file_path = None
-            # On Railway: explicitly forward to parent's stdout/stderr so logs appear
-            # Using sys.stdout/stderr ensures subprocess output appears in Railway logs
+        # Detect Railway environment FIRST
+        is_railway = os.path.exists('/app/.venv')
+
+        if is_railway:
+            logger.info("🚂 RAILWAY ENVIRONMENT DETECTED")
+            logger.info("📝 Subprocess output will go directly to Railway logs (not files)")
+            # On Railway: ALWAYS use stdout/stderr directly (never files)
             import sys
             subprocess_stdout = sys.stdout
             subprocess_stderr = sys.stderr
+            log_file = None
+            log_file_path = None
+            use_new_session = False  # Stay attached for log visibility
+        else:
+            logger.info("💻 LOCAL ENVIRONMENT DETECTED")
+            # Local: try to create log files
+            try:
+                log_file_path = f"agent_logs/agent_{request.agent_id[:8]}_{room_name}.log"
+                os.makedirs("agent_logs", exist_ok=True)
+                log_file = open(log_file_path, 'w', buffering=1)  # Line buffered
+                logger.info(f"📝 Agent logs will be written to: {log_file_path}")
+                subprocess_stdout = log_file
+                subprocess_stderr = subprocess.PIPE
+                use_new_session = True  # Detach in local dev
+            except Exception as e:
+                logger.warning(f"⚠️ Could not create log file: {e}")
+                logger.info("📝 Using stdout/stderr instead")
+                import sys
+                subprocess_stdout = sys.stdout
+                subprocess_stderr = sys.stderr
+                log_file = None
+                log_file_path = None
+                use_new_session = False
 
         logger.info("🎯 Spawning subprocess...")
-
-        # On Railway, we need subprocess output to appear in logs
-        # Don't use start_new_session on Railway - it detaches stdout completely
-        is_railway = os.path.exists('/app/.venv')
-        use_new_session = not is_railway  # Only detach locally
-
-        if is_railway:
-            logger.info("🚂 Railway environment detected - subprocess will stay attached for log visibility")
-        else:
-            logger.info("💻 Local environment - subprocess will detach")
 
         try:
             process = subprocess.Popen(
@@ -684,9 +688,9 @@ async def start_call(request: CallStartRequest):
                 log_file.close()
             raise HTTPException(status_code=500, detail=f"Failed to spawn agent subprocess: {e}")
 
-        # Quick check if process is still running after brief delay
-        logger.info("⏳ Waiting 0.5s to verify subprocess starts...")
-        await asyncio.sleep(0.5)
+        # Check if process is still running after brief delay
+        logger.info("⏳ Waiting 1s to verify subprocess starts and produces output...")
+        await asyncio.sleep(1.0)
 
         poll_result = process.poll()
         if poll_result is not None:
